@@ -72,8 +72,8 @@
                                 <option>-DBUILD_PHASE=test-compile</option>
                                 <option>${cmake.addition.option}</option>
                             </options>
-                            <sourcePath />
-                            <targetPath />
+                            <sourcePath/>
+                            <targetPath/>
                         </configuration>
                     </execution>
                     <!-- Compile the test code -->

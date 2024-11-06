@@ -45,16 +45,24 @@ public class FileSeriesReader extends AbstractFileSeriesReader {
 
   @Override
   protected void initChunkReader(IChunkMetadata chunkMetaData) throws IOException {
+    currentChunkMeasurementNames.clear();
     if (chunkMetaData instanceof ChunkMetadata) {
       Chunk chunk = chunkLoader.loadChunk((ChunkMetadata) chunkMetaData);
       this.chunkReader = new ChunkReader(chunk, filter);
+      currentChunkMeasurementNames.add(chunkMetaData.getMeasurementUid());
     } else {
       AlignedChunkMetadata alignedChunkMetadata = (AlignedChunkMetadata) chunkMetaData;
       Chunk timeChunk =
           chunkLoader.loadChunk((ChunkMetadata) (alignedChunkMetadata.getTimeChunkMetadata()));
       List<Chunk> valueChunkList = new ArrayList<>();
       for (IChunkMetadata metadata : alignedChunkMetadata.getValueChunkMetadataList()) {
-        valueChunkList.add(chunkLoader.loadChunk((ChunkMetadata) metadata));
+        if (metadata != null) {
+          valueChunkList.add(chunkLoader.loadChunk((ChunkMetadata) metadata));
+          currentChunkMeasurementNames.add(metadata.getMeasurementUid());
+          continue;
+        }
+        valueChunkList.add(null);
+        currentChunkMeasurementNames.add(null);
       }
       this.chunkReader = new AlignedChunkReader(timeChunk, valueChunkList, filter);
     }
