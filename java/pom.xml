@@ -27,7 +27,7 @@
         <version>1.2.0-1c9924b4-SNAPSHOT</version>
     </parent>
     <artifactId>tsfile-java</artifactId>
-    <version>1.2.0-1c9924b4-SNAPSHOT</version>
+    <version>1.2.0-af5cc2e0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>TsFile: Java</name>
     <modules>
