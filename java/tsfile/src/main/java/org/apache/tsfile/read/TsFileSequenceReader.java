@@ -1828,7 +1828,7 @@ public class TsFileSequenceReader implements AutoCloseable {
    * @param totalSize the size of data that want to read
    * @return data that been read.
    */
-  protected ByteBuffer readData(long position, int totalSize) throws IOException {
+  protected final ByteBuffer readData(long position, int totalSize) throws IOException {
     return readData(position, totalSize, null);
   }
 
@@ -1889,7 +1889,7 @@ public class TsFileSequenceReader implements AutoCloseable {
    * @param end the end position of data that want to read
    * @return data that been read.
    */
-  protected ByteBuffer readData(long start, long end) throws IOException {
+  protected final ByteBuffer readData(long start, long end) throws IOException {
     return readData(start, end, null);
   }
 
@@ -1903,7 +1903,7 @@ public class TsFileSequenceReader implements AutoCloseable {
    * @param ioSizeRecorder can be null
    * @return data that been read.
    */
-  protected ByteBuffer readData(long start, long end, LongConsumer ioSizeRecorder)
+  protected final ByteBuffer readData(long start, long end, LongConsumer ioSizeRecorder)
       throws IOException {
     try {
       return readData(start, (int) (end - start), ioSizeRecorder);
