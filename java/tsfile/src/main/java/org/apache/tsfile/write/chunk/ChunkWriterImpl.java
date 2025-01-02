@@ -21,6 +21,8 @@ package org.apache.tsfile.write.chunk;
 import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.compress.ICompressor;
 import org.apache.tsfile.encoding.encoder.SDTEncoder;
+import org.apache.tsfile.encrypt.EncryptParameter;
+import org.apache.tsfile.encrypt.EncryptUtils;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.exception.write.PageException;
 import org.apache.tsfile.file.header.ChunkHeader;
@@ -49,6 +51,8 @@ public class ChunkWriterImpl implements IChunkWriter {
   private final IMeasurementSchema measurementSchema;
 
   private final ICompressor compressor;
+
+  private final EncryptParameter encryptParam;
 
   /** all pages of this chunk. */
   private final PublicBAOS pageBuffer;
@@ -99,6 +103,7 @@ public class ChunkWriterImpl implements IChunkWriter {
   public ChunkWriterImpl(IMeasurementSchema schema) {
     this.measurementSchema = schema;
     this.compressor = ICompressor.getCompressor(schema.getCompressor());
+    this.encryptParam = EncryptUtils.encryptParam;
     this.pageBuffer = new PublicBAOS();
 
     this.pageSizeThreshold = TSFileDescriptor.getInstance().getConfig().getPageSizeInByte();
@@ -110,7 +115,31 @@ public class ChunkWriterImpl implements IChunkWriter {
     // init statistics for this chunk and page
     this.statistics = Statistics.getStatsByType(measurementSchema.getType());
 
-    this.pageWriter = new PageWriter(measurementSchema);
+    this.pageWriter = new PageWriter(measurementSchema, encryptParam);
+
+    this.pageWriter.setTimeEncoder(measurementSchema.getTimeEncoder());
+    this.pageWriter.setValueEncoder(measurementSchema.getValueEncoder());
+
+    // check if the measurement schema uses SDT
+    checkSdtEncoding();
+  }
+
+  public ChunkWriterImpl(IMeasurementSchema schema, EncryptParameter encryptParam) {
+    this.measurementSchema = schema;
+    this.compressor = ICompressor.getCompressor(schema.getCompressor());
+    this.encryptParam = encryptParam;
+    this.pageBuffer = new PublicBAOS();
+
+    this.pageSizeThreshold = TSFileDescriptor.getInstance().getConfig().getPageSizeInByte();
+    this.maxNumberOfPointsInPage =
+        TSFileDescriptor.getInstance().getConfig().getMaxNumberOfPointsInPage();
+    // initial check of memory usage. So that we have enough data to make an initial prediction
+    this.valueCountInOnePageForNextCheck = MINIMUM_RECORD_COUNT_FOR_CHECK;
+
+    // init statistics for this chunk and page
+    this.statistics = Statistics.getStatsByType(measurementSchema.getType());
+
+    this.pageWriter = new PageWriter(measurementSchema, this.encryptParam);
 
     this.pageWriter.setTimeEncoder(measurementSchema.getTimeEncoder());
     this.pageWriter.setValueEncoder(measurementSchema.getValueEncoder());
@@ -121,6 +150,12 @@ public class ChunkWriterImpl implements IChunkWriter {
 
   public ChunkWriterImpl(IMeasurementSchema schema, boolean isMerging) {
     this(schema);
+    this.isMerging = isMerging;
+  }
+
+  public ChunkWriterImpl(
+      IMeasurementSchema schema, boolean isMerging, EncryptParameter encryptParam) {
+    this(schema, encryptParam);
     this.isMerging = isMerging;
   }
 

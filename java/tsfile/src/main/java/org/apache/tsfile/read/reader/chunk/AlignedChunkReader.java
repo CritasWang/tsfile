@@ -21,6 +21,8 @@ package org.apache.tsfile.read.reader.chunk;
 
 import org.apache.tsfile.compress.IUnCompressor;
 import org.apache.tsfile.encoding.decoder.Decoder;
+import org.apache.tsfile.encrypt.EncryptParameter;
+import org.apache.tsfile.encrypt.IDecryptor;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.file.MetaMarker;
 import org.apache.tsfile.file.header.ChunkHeader;
@@ -52,6 +54,8 @@ public class AlignedChunkReader extends AbstractChunkReader {
   // deleted intervals of all the sub sensors
   private final List<List<TimeRange>> valueDeleteIntervalsList = new ArrayList<>();
 
+  private final EncryptParameter encryptParam;
+
   @SuppressWarnings("unchecked")
   public AlignedChunkReader(
       Chunk timeChunk, List<Chunk> valueChunkList, long readStopTime, Filter queryFilter)
@@ -69,7 +73,7 @@ public class AlignedChunkReader extends AbstractChunkReader {
 
           valueChunkStatisticsList.add(chunk == null ? null : chunk.getChunkStatistic());
         });
-
+    this.encryptParam = timeChunk.getEncryptParam();
     initAllPageReaders(timeChunk.getChunkStatistic(), valueChunkStatisticsList);
   }
 
@@ -191,8 +195,10 @@ public class AlignedChunkReader extends AbstractChunkReader {
 
   private AlignedPageReader constructAlignedPageReader(
       PageHeader timePageHeader, List<PageHeader> rawValuePageHeaderList) throws IOException {
+    IDecryptor decrytor = IDecryptor.getDecryptor(encryptParam);
     ByteBuffer timePageData =
-        ChunkReader.deserializePageData(timePageHeader, timeChunkDataBuffer, timeChunkHeader);
+        ChunkReader.deserializePageData(
+            timePageHeader, timeChunkDataBuffer, timeChunkHeader, decrytor);
 
     List<PageHeader> valuePageHeaderList = new ArrayList<>();
     LazyLoadPageData[] lazyLoadPageDataArray = new LazyLoadPageData[rawValuePageHeaderList.size()];
@@ -232,7 +238,8 @@ public class AlignedChunkReader extends AbstractChunkReader {
             new LazyLoadPageData(
                 valueChunkDataBufferList.get(i).array(),
                 currentPagePosition,
-                IUnCompressor.getUnCompressor(valueChunkHeader.getCompressionType()));
+                IUnCompressor.getUnCompressor(valueChunkHeader.getCompressionType()),
+                encryptParam);
         valueDataTypeList.add(valueChunkHeader.getDataType());
         valueDecoderList.add(
             Decoder.getDecoderByType(

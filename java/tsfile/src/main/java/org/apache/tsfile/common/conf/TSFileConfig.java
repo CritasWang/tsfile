@@ -19,6 +19,7 @@
 
 package org.apache.tsfile.common.conf;
 
+import org.apache.tsfile.encrypt.EncryptUtils;
 import org.apache.tsfile.enums.TSDataType;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
 import org.apache.tsfile.fileSystem.FSType;
@@ -131,6 +132,18 @@ public class TSFileConfig implements Serializable {
   /** Data compression method, TsFile supports UNCOMPRESSED, SNAPPY, ZSTD or LZ4. */
   private CompressionType compressor = CompressionType.LZ4;
 
+  /** encryptFlag, true means opening the encrypt function. */
+  private boolean encryptFlag = false;
+
+  /** encryptKey, this should be 16 bytes String. */
+  private String encryptKey = "abcdefghijklmnop";
+
+  /**
+   * default encryptType is "org.apache.tsfile.encrypt.UNENCRYPTED", TsFile supports UNENCRYPTED or
+   * AES128.
+   */
+  private String encryptType = "org.apache.tsfile.encrypt.UNENCRYPTED";
+
   /** Line count threshold for checking page memory occupied size. */
   private int pageCheckSizeThreshold = 100;
 
@@ -208,6 +221,37 @@ public class TSFileConfig implements Serializable {
 
   public TSFileConfig() {
     // do nothing because we already give default value to each field when they are being declared
+  }
+
+  public boolean getEncryptFlag() {
+    return encryptFlag;
+  }
+
+  public void setEncryptFlag(String encryptFlag) {
+    this.encryptFlag = Boolean.parseBoolean(encryptFlag);
+  }
+
+  public String getEncryptType() {
+    return this.encryptType;
+  }
+
+  public void setEncryptType(String encryptType) {
+    this.encryptType = encryptType;
+  }
+
+  public String getEncryptKey() {
+    return this.encryptKey;
+  }
+
+  public void setEncryptKey(String encryptKey) {
+    this.encryptKey = encryptKey;
+  }
+
+  public void setEncryptKeyFromPath(String encryptKeyPath) {
+    if (!encryptFlag) {
+      return;
+    }
+    this.encryptKey = EncryptUtils.getEncryptKeyFromPath(encryptKeyPath);
   }
 
   public int getGroupSizeInByte() {
