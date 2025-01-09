@@ -244,9 +244,10 @@ public class TsFileWriterTest {
                     "s1", TSDataType.FLOAT, TSEncoding.RLE, CompressionType.SNAPPY),
                 new MeasurementSchema(
                     "s2", TSDataType.INT32, TSEncoding.RLE, CompressionType.SNAPPY)));
-    tablet.addTimestamp(0, 10000);
-    tablet.addValue(0, 0, 5.0f);
-    tablet.addValue(0, 1, 5);
+    tablet.timestamps[0] = 10000;
+    ((float[]) tablet.values[0])[0] = 5.0f;
+    ((int[]) tablet.values[1])[0] = 5;
+    tablet.setRowSize(1);
     writer.writeTree(tablet);
     closeFile();
     readOneRow();
@@ -262,9 +263,9 @@ public class TsFileWriterTest {
                     "s1", TSDataType.FLOAT, TSEncoding.RLE, CompressionType.SNAPPY),
                 new MeasurementSchema(
                     "s2", TSDataType.INT32, TSEncoding.RLE, CompressionType.SNAPPY)));
-    tablet.addTimestamp(0, 10000);
-    tablet.addValue(0, 0, 5.0f);
-    tablet.addValue(0, 1, 0);
+    tablet.timestamps[0] = 10000;
+    ((float[]) tablet.values[0])[0] = 5.0f;
+    tablet.setRowSize(1);
     writer.writeTree(tablet);
     closeFile();
     // in this case, the value of s2 = 0 at time 10000.

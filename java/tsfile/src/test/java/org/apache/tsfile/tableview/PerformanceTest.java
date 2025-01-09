@@ -274,13 +274,15 @@ public class PerformanceTest {
   private void fillTreeTablet(Tablet tablet, int tableNum, int deviceNum, int tabletNum) {
     tablet.setDeviceId(genTreeDeviceId(tableNum, deviceNum).toString());
     for (int i = 0; i < measurementSchemaCnt; i++) {
+      long[] values = (long[]) tablet.values[i];
       for (int valNum = 0; valNum < pointPerSeries; valNum++) {
-        tablet.addValue(valNum, i, tabletNum * pointPerSeries + valNum);
+        values[valNum] = (long) tabletNum * pointPerSeries + valNum;
       }
     }
     for (int valNum = 0; valNum < pointPerSeries; valNum++) {
-      tablet.addTimestamp(valNum, tabletNum * pointPerSeries + valNum);
+      tablet.timestamps[valNum] = (long) tabletNum * pointPerSeries + valNum;
     }
+    tablet.setRowSize(pointPerSeries);
   }
 
   private Tablet initTableTablet() {
@@ -301,18 +303,21 @@ public class PerformanceTest {
     IDeviceID deviceID = genTableDeviceId(tableNum, deviceNum);
     tablet.setTableName(deviceID.segment(0).toString());
     for (int i = 0; i < idSchemaCnt; i++) {
+      String[] strings = ((String[]) tablet.values[i]);
       for (int rowNum = 0; rowNum < pointPerSeries; rowNum++) {
-        tablet.addValue(rowNum, i, deviceID.segment(i + 1).toString());
+        strings[rowNum] = deviceID.segment(i + 1).toString();
       }
     }
     for (int i = 0; i < measurementSchemaCnt; i++) {
+      long[] values = (long[]) tablet.values[i + idSchemaCnt];
       for (int valNum = 0; valNum < pointPerSeries; valNum++) {
-        tablet.addValue(valNum, i + idSchemaCnt, tabletNum * pointPerSeries + valNum);
+        values[valNum] = (long) tabletNum * pointPerSeries + valNum;
       }
     }
     for (int valNum = 0; valNum < pointPerSeries; valNum++) {
-      tablet.addTimestamp(valNum, tabletNum * pointPerSeries + valNum);
+      tablet.timestamps[valNum] = (long) tabletNum * pointPerSeries + valNum;
     }
+    tablet.setRowSize(pointPerSeries);
   }
 
   private void registerTree(TsFileWriter writer) throws WriteProcessException {

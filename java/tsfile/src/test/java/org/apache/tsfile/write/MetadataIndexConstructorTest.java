@@ -477,13 +477,16 @@ public class MetadataIndexConstructorTest {
           // add measurements into TSFileWriter
           // construct the tablet
           Tablet tablet = new Tablet(device.toString(), tabletSchema);
+          long[] timestamps = tablet.timestamps;
+          Object[] values = tablet.values;
           long timestamp = 1;
           long value = 1000000L;
           for (int r = 0; r < rowNum; r++, value++) {
             int row = tablet.getRowSize();
             tablet.addTimestamp(row, timestamp++);
             for (int j = 0; j < measurementNum; j++) {
-              tablet.addValue(row, j, value);
+              long[] sensor = (long[]) values[j];
+              sensor[row] = value;
             }
             // write Tablet to TsFile
             if (tablet.getRowSize() == tablet.getMaxRowNumber()) {

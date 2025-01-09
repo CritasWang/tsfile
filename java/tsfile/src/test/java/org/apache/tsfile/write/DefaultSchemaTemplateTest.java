@@ -66,6 +66,8 @@ public class DefaultSchemaTemplateTest {
       writer.registerDevice("d1", "defaultTemplate");
 
       Tablet tablet = new Tablet("d1", schemaList);
+      long[] timestamps = tablet.timestamps;
+      Object[] values = tablet.values;
 
       long timestamp = 1;
       long value = 1L;
@@ -74,7 +76,8 @@ public class DefaultSchemaTemplateTest {
         int row = tablet.getRowSize();
         tablet.addTimestamp(row, timestamp++);
         for (int i = 0; i < 2; i++) {
-          tablet.addValue(row, i, value);
+          long[] sensor = (long[]) values[i];
+          sensor[row] = value;
         }
         // write Tablet to TsFile
         if (tablet.getRowSize() == tablet.getMaxRowNumber()) {

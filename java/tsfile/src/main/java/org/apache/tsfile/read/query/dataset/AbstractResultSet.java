@@ -168,7 +168,7 @@ public abstract class AbstractResultSet implements ResultSet {
   }
 
   protected Field getField(int columnIndex) {
-    if (columnIndex > this.columnNameToColumnIndexMap.size() || columnIndex <= 0) {
+    if (columnIndex > this.columnNameToColumnIndexMap.size()) {
       throw new IndexOutOfBoundsException("column index " + columnIndex + " out of bound");
     }
     Field field;

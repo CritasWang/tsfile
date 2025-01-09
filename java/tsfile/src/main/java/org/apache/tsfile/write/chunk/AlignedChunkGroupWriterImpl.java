@@ -233,7 +233,7 @@ public class AlignedChunkGroupWriterImpl implements IChunkGroupWriter {
     // TODO: changing to a column-first style by calculating the remaining page space of each
     // column firsts
     for (int row = startRowIndex; row < endRowIndex; row++) {
-      long time = tablet.getTimestamps()[row];
+      long time = tablet.timestamps[row];
       checkIsHistoryData(time);
       for (int columnIndex = 0; columnIndex < tablet.getSchemas().size(); columnIndex++) {
         if (tablet.getColumnTypes() != null
@@ -242,19 +242,18 @@ public class AlignedChunkGroupWriterImpl implements IChunkGroupWriter {
         }
 
         boolean isNull =
-            tablet.getBitMaps() != null
-                && tablet.getBitMaps()[columnIndex] != null
-                && tablet.getBitMaps()[columnIndex].isMarked(row);
+            tablet.bitMaps != null
+                && tablet.bitMaps[columnIndex] != null
+                && tablet.bitMaps[columnIndex].isMarked(row);
         // check isNull by bitMap in tablet
         ValueChunkWriter valueChunkWriter =
             tryToAddSeriesWriterInternal(measurementSchemas.get(columnIndex));
         switch (measurementSchemas.get(columnIndex).getType()) {
           case BOOLEAN:
-            valueChunkWriter.write(
-                time, ((boolean[]) tablet.getValues()[columnIndex])[row], isNull);
+            valueChunkWriter.write(time, ((boolean[]) tablet.values[columnIndex])[row], isNull);
             break;
           case INT32:
-            valueChunkWriter.write(time, ((int[]) tablet.getValues()[columnIndex])[row], isNull);
+            valueChunkWriter.write(time, ((int[]) tablet.values[columnIndex])[row], isNull);
             break;
           case DATE:
             valueChunkWriter.write(
@@ -262,23 +261,23 @@ public class AlignedChunkGroupWriterImpl implements IChunkGroupWriter {
                 isNull
                     ? 0
                     : DateUtils.parseDateExpressionToInt(
-                        ((LocalDate[]) tablet.getValues()[columnIndex])[row]),
+                        ((LocalDate[]) tablet.values[columnIndex])[row]),
                 isNull);
             break;
           case INT64:
           case TIMESTAMP:
-            valueChunkWriter.write(time, ((long[]) tablet.getValues()[columnIndex])[row], isNull);
+            valueChunkWriter.write(time, ((long[]) tablet.values[columnIndex])[row], isNull);
             break;
           case FLOAT:
-            valueChunkWriter.write(time, ((float[]) tablet.getValues()[columnIndex])[row], isNull);
+            valueChunkWriter.write(time, ((float[]) tablet.values[columnIndex])[row], isNull);
             break;
           case DOUBLE:
-            valueChunkWriter.write(time, ((double[]) tablet.getValues()[columnIndex])[row], isNull);
+            valueChunkWriter.write(time, ((double[]) tablet.values[columnIndex])[row], isNull);
             break;
           case TEXT:
           case BLOB:
           case STRING:
-            valueChunkWriter.write(time, ((Binary[]) tablet.getValues()[columnIndex])[row], isNull);
+            valueChunkWriter.write(time, ((Binary[]) tablet.values[columnIndex])[row], isNull);
             break;
           default:
             throw new UnSupportedDataTypeException(
