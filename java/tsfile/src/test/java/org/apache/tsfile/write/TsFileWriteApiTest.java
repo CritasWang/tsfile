@@ -937,7 +937,7 @@ public class TsFileWriteApiTest {
       writer.writeTable(tablet);
     }
     try (TsFileSequenceReader reader = new TsFileSequenceReader(f.getPath())) {
-      Map<String, TableSchema> tableSchemaMap = reader.getTableSchemaMap();
+      Map<String, TableSchema> tableSchemaMap = reader.readFileMetadata().getTableSchemaMap();
       TableSchema tableSchemaInTsFile = tableSchemaMap.get("table1");
       Assert.assertNotNull(tableSchemaInTsFile);
       for (IMeasurementSchema columnSchema : tableSchemaInTsFile.getColumnSchemas()) {

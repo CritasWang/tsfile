@@ -36,9 +36,7 @@ import java.nio.ByteBuffer;
 public class DeserializeConfig {
   public byte versionNumber = org.apache.tsfile.common.conf.TSFileConfig.VERSION_NUMBER;
   public BufferDeserializer<TsFileMetadata> tsFileMetadataBufferDeserializer =
-      TsFileMetadata::deserializeWithoutCacheTableSchemaMap;
-  public BufferDeserializer<TsFileMetadata> cacheTableSchemaMapTsFileMetadataBufferDeserializer =
-      TsFileMetadata::deserializeAndCacheTableSchemaMap;
+      TsFileMetadata::deserializeFrom;
 
   public BufferDeserializer<MetadataIndexNode> deviceMetadataIndexNodeBufferDeserializer =
       (buffer, context) -> MetadataIndexNode.deserializeFrom(buffer, true, context);

@@ -42,8 +42,6 @@ public class CompatibilityUtils {
         org.apache.tsfile.common.conf.TSFileConfig.VERSION_NUMBER_V3;
     v3DeserializeConfig.tsFileMetadataBufferDeserializer =
         CompatibilityUtils::deserializeTsFileMetadataFromV3;
-    v3DeserializeConfig.cacheTableSchemaMapTsFileMetadataBufferDeserializer =
-        CompatibilityUtils::deserializeTsFileMetadataFromV3;
     v3DeserializeConfig.deviceIDBufferDeserializer =
         ((buffer, context) -> {
           final PlainDeviceID deviceID = PlainDeviceID.deserialize(buffer);

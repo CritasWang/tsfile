@@ -72,7 +72,7 @@ public class TsFileMetadataTest {
       ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
       channel.read(buffer);
       buffer.rewind();
-      metaData = TsFileMetadata.deserializeAndCacheTableSchemaMap(buffer, deserializeConfig);
+      metaData = TsFileMetadata.deserializeFrom(buffer, deserializeConfig);
       return metaData;
     } catch (IOException e) {
       e.printStackTrace();

@@ -46,7 +46,6 @@ public class TsFileMetadata {
   // List of <name, offset, childMetadataIndexType>
   private Map<String, MetadataIndexNode> tableMetadataIndexNodeMap;
   private Map<String, TableSchema> tableSchemaMap;
-  private boolean hasTableSchemaMapCache;
   private Map<String, String> tsFileProperties;
 
   // offset of MetaMarker.SEPARATOR
@@ -58,24 +57,13 @@ public class TsFileMetadata {
 
   private String encryptType;
 
-  public static TsFileMetadata deserializeAndCacheTableSchemaMap(
-      ByteBuffer buffer, DeserializeConfig context) {
-    return deserializeFrom(buffer, context, true);
-  }
-
-  public static TsFileMetadata deserializeWithoutCacheTableSchemaMap(
-      ByteBuffer buffer, DeserializeConfig context) {
-    return deserializeFrom(buffer, context, false);
-  }
-
   /**
    * deserialize data from the buffer.
    *
    * @param buffer -buffer use to deserialize
    * @return -an instance of TsFileMetaData
    */
-  public static TsFileMetadata deserializeFrom(
-      ByteBuffer buffer, DeserializeConfig context, boolean needTableSchemaMap) {
+  public static TsFileMetadata deserializeFrom(ByteBuffer buffer, DeserializeConfig context) {
     TsFileMetadata fileMetaData = new TsFileMetadata();
 
     int startPos = buffer.position();
@@ -96,13 +84,10 @@ public class TsFileMetadata {
     for (int i = 0; i < tableSchemaNum; i++) {
       String tableName = ReadWriteIOUtils.readVarIntString(buffer);
       TableSchema tableSchema = context.tableSchemaBufferDeserializer.deserialize(buffer, context);
-      if (needTableSchemaMap) {
-        tableSchema.setTableName(tableName);
-        tableSchemaMap.put(tableName, tableSchema);
-      }
+      tableSchema.setTableName(tableName);
+      tableSchemaMap.put(tableName, tableSchema);
     }
     fileMetaData.setTableSchemaMap(tableSchemaMap);
-    fileMetaData.hasTableSchemaMapCache = needTableSchemaMap;
 
     // metaOffset
     long metaOffset = ReadWriteIOUtils.readLong(buffer);
@@ -282,7 +267,6 @@ public class TsFileMetadata {
 
   public void setTableSchemaMap(Map<String, TableSchema> tableSchemaMap) {
     this.tableSchemaMap = tableSchemaMap;
-    this.hasTableSchemaMapCache = true;
   }
 
   public Map<String, MetadataIndexNode> getTableMetadataIndexNodeMap() {
@@ -295,10 +279,6 @@ public class TsFileMetadata {
       metadataIndexNode = tableMetadataIndexNodeMap.get("");
     }
     return metadataIndexNode;
-  }
-
-  public boolean hasTableSchemaMapCache() {
-    return hasTableSchemaMapCache;
   }
 
   public Map<String, TableSchema> getTableSchemaMap() {

@@ -22,7 +22,6 @@ package org.apache.tsfile.read;
 import org.apache.tsfile.common.conf.TSFileConfig;
 import org.apache.tsfile.common.conf.TSFileDescriptor;
 import org.apache.tsfile.common.constant.TsFileConstant;
-import org.apache.tsfile.compatibility.BufferDeserializer;
 import org.apache.tsfile.compatibility.CompatibilityUtils;
 import org.apache.tsfile.compatibility.DeserializeConfig;
 import org.apache.tsfile.compress.IUnCompressor;
@@ -53,7 +52,6 @@ import org.apache.tsfile.file.metadata.ITimeSeriesMetadata;
 import org.apache.tsfile.file.metadata.MeasurementMetadataIndexEntry;
 import org.apache.tsfile.file.metadata.MetadataIndexNode;
 import org.apache.tsfile.file.metadata.TableDeviceMetadata;
-import org.apache.tsfile.file.metadata.TableSchema;
 import org.apache.tsfile.file.metadata.TimeseriesMetadata;
 import org.apache.tsfile.file.metadata.TsFileMetadata;
 import org.apache.tsfile.file.metadata.enums.CompressionType;
@@ -136,7 +134,6 @@ public class TsFileSequenceReader implements AutoCloseable {
   private byte fileVersion;
 
   private DeserializeConfig deserializeConfig = new DeserializeConfig();
-  private volatile boolean cacheTableSchemaMap = false;
 
   /**
    * Create a file reader of the given file. The reader will read the tail of the file to get the
@@ -288,10 +285,6 @@ public class TsFileSequenceReader implements AutoCloseable {
     }
   }
 
-  public void setEnableCacheTableSchemaMap() {
-    this.cacheTableSchemaMap = true;
-  }
-
   public void loadMetadataSize() throws IOException {
     loadMetadataSize(null);
   }
@@ -401,7 +394,9 @@ public class TsFileSequenceReader implements AutoCloseable {
       if (tsFileMetaData == null) {
         synchronized (this) {
           if (tsFileMetaData == null) {
-            tsFileMetaData = forceReadFileMetadata(cacheTableSchemaMap, ioSizeRecorder);
+            tsFileMetaData =
+                deserializeConfig.tsFileMetadataBufferDeserializer.deserialize(
+                    readData(fileMetadataPos, fileMetadataSize, ioSizeRecorder), deserializeConfig);
           }
         }
       }
@@ -412,34 +407,6 @@ public class TsFileSequenceReader implements AutoCloseable {
       throw e;
     }
     return tsFileMetaData;
-  }
-
-  public Map<String, TableSchema> getTableSchemaMap() throws IOException {
-    return getTableSchemaMap(null);
-  }
-
-  public Map<String, TableSchema> getTableSchemaMap(LongConsumer ioSizeRecorder)
-      throws IOException {
-    if (tsFileMetaData != null && tsFileMetaData.hasTableSchemaMapCache()) {
-      return tsFileMetaData.getTableSchemaMap();
-    }
-    TsFileMetadata tempTsFileMetadata = forceReadFileMetadata(true, ioSizeRecorder);
-    if (cacheTableSchemaMap) {
-      synchronized (this) {
-        this.tsFileMetaData = tempTsFileMetadata;
-      }
-    }
-    return tempTsFileMetadata.getTableSchemaMap();
-  }
-
-  private TsFileMetadata forceReadFileMetadata(
-      boolean needTableSchemaMap, LongConsumer ioSizeRecorder) throws IOException {
-    ByteBuffer buffer = readData(fileMetadataPos, fileMetadataSize, ioSizeRecorder);
-    BufferDeserializer<TsFileMetadata> deserializer =
-        needTableSchemaMap
-            ? deserializeConfig.cacheTableSchemaMapTsFileMetadataBufferDeserializer
-            : deserializeConfig.tsFileMetadataBufferDeserializer;
-    return deserializer.deserialize(buffer, deserializeConfig);
   }
 
   /**

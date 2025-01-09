@@ -24,7 +24,6 @@ import org.apache.tsfile.exception.write.NoMeasurementException;
 import org.apache.tsfile.file.metadata.IChunkMetadata;
 import org.apache.tsfile.file.metadata.IDeviceID;
 import org.apache.tsfile.file.metadata.MetadataIndexNode;
-import org.apache.tsfile.file.metadata.TableSchema;
 import org.apache.tsfile.file.metadata.TsFileMetadata;
 import org.apache.tsfile.read.common.Path;
 import org.apache.tsfile.read.common.TimeRange;
@@ -55,8 +54,6 @@ public interface IMetadataQuerier {
   Map<Path, List<IChunkMetadata>> getChunkMetaDataMap(List<Path> paths) throws IOException;
 
   TsFileMetadata getWholeFileMetadata();
-
-  Map<String, TableSchema> getTableSchemaMap();
 
   /**
    * this will load all chunk metadata of given paths into cache.
