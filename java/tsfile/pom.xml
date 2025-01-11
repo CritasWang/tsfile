@@ -73,6 +73,10 @@
             <artifactId>antlr4-runtime</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.github.wendykierp</groupId>
+            <artifactId>JTransforms</artifactId>
+        </dependency>
+        <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <scope>test</scope>
