@@ -206,6 +206,12 @@ public class TSFileConfig implements Serializable {
   /** customizedProperties, this should be empty by default. */
   private Properties customizedProperties = new Properties();
 
+  /** Default SNR for FREQ encoding is 40dB. */
+  private double freqEncodingSNR = 40;
+
+  /** Default block size for FREQ encoding is 1024. */
+  private int freqEncodingBlockSize = 1024;
+
   public TSFileConfig() {
     // do nothing because we already give default value to each field when they are being declared
   }
@@ -557,5 +563,21 @@ public class TSFileConfig implements Serializable {
 
   public void setObjectStorageTsFileOutput(String objectStorageTsFileOutput) {
     this.objectStorageTsFileOutput = objectStorageTsFileOutput;
+  }
+
+  public double getFreqEncodingSNR() {
+    return freqEncodingSNR;
+  }
+
+  public void setFreqEncodingSNR(double freqEncodingSNR) {
+    this.freqEncodingSNR = freqEncodingSNR;
+  }
+
+  public int getFreqEncodingBlockSize() {
+    return freqEncodingBlockSize;
+  }
+
+  public void setFreqEncodingBlockSize(int freqEncodingBlockSize) {
+    this.freqEncodingBlockSize = freqEncodingBlockSize;
   }
 }
