@@ -32,6 +32,7 @@ import static org.apache.tsfile.read.common.block.column.ColumnUtil.checkValidRe
 import static org.apache.tsfile.utils.RamUsageEstimator.sizeOfBooleanArray;
 import static org.apache.tsfile.utils.RamUsageEstimator.sizeOfLongArray;
 
+@SuppressWarnings("java:S3012")
 public class LongColumn implements Column {
 
   private static final int INSTANCE_SIZE =
@@ -93,8 +94,22 @@ public class LongColumn implements Column {
   }
 
   @Override
+  public double getDouble(int position) {
+    return values[position + arrayOffset];
+  }
+
+  @Override
   public long[] getLongs() {
     return values;
+  }
+
+  @Override
+  public double[] getDoubles() {
+    double[] doubles = new double[values.length];
+    for (int i = 0; i < values.length; i++) {
+      doubles[i] = values[i];
+    }
+    return doubles;
   }
 
   @Override
