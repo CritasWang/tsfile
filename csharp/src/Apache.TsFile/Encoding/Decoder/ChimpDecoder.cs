@@ -116,12 +116,21 @@ internal class IntChimpDecoderImpl : IChimpDecoderImpl
     private bool _firstValueWasRead = false;
     private int _storedLeadingZeros = int.MaxValue;
     private int _storedTrailingZeros = 0;
-    private bool _hasNext = true;
+    internal bool _hasNext = true;
+    private int _cachedValue = 0;
+    private int _endMarker = int.MinValue;
     
     private byte _buffer = 0;
     private int _bitsLeft = 0;
     private byte[]? _data;
     private int _dataOffset = 0;
+    
+    public IntChimpDecoderImpl() : this(int.MinValue) { }
+    
+    public IntChimpDecoderImpl(int endMarker)
+    {
+        _endMarker = endMarker;
+    }
     
     public int ReadInt(byte[] buffer, ref int offset)
     {
@@ -131,7 +140,7 @@ internal class IntChimpDecoderImpl : IChimpDecoderImpl
             _dataOffset = offset;
         }
         
-        int returnValue = _storedValue;
+        int returnValue;
         if (!_firstValueWasRead)
         {
             FlipByte();
@@ -139,8 +148,13 @@ internal class IntChimpDecoderImpl : IChimpDecoderImpl
             _storedValues[_current] = _storedValue;
             _firstValueWasRead = true;
             returnValue = _storedValue;
+            CacheNext();
         }
-        CacheNext();
+        else
+        {
+            returnValue = _cachedValue;
+            CacheNext();
+        }
         
         offset = _dataOffset;
         return returnValue;
@@ -148,8 +162,14 @@ internal class IntChimpDecoderImpl : IChimpDecoderImpl
     
     private void CacheNext()
     {
+        if (_dataOffset >= (_data?.Length ?? 0))
+        {
+            _hasNext = false;
+            return;
+        }
         ReadNext();
-        if (_storedValues[_current] == int.MinValue)
+        _cachedValue = _storedValues[_current];
+        if (_cachedValue == _endMarker)
         {
             _hasNext = false;
         }
@@ -296,12 +316,21 @@ internal class LongChimpDecoderImpl : IChimpDecoderImpl
     private bool _firstValueWasRead = false;
     private int _storedLeadingZeros = int.MaxValue;
     private int _storedTrailingZeros = 0;
-    private bool _hasNext = true;
+    internal bool _hasNext = true;
+    private long _cachedValue = 0;
+    private long _endMarker = long.MinValue;
     
     private byte _buffer = 0;
     private int _bitsLeft = 0;
     private byte[]? _data;
     private int _dataOffset = 0;
+    
+    public LongChimpDecoderImpl() : this(long.MinValue) { }
+    
+    public LongChimpDecoderImpl(long endMarker)
+    {
+        _endMarker = endMarker;
+    }
     
     public long ReadLong(byte[] buffer, ref int offset)
     {
@@ -311,7 +340,7 @@ internal class LongChimpDecoderImpl : IChimpDecoderImpl
             _dataOffset = offset;
         }
         
-        long returnValue = _storedValue;
+        long returnValue;
         if (!_firstValueWasRead)
         {
             FlipByte();
@@ -319,8 +348,13 @@ internal class LongChimpDecoderImpl : IChimpDecoderImpl
             _storedValues[_current] = _storedValue;
             _firstValueWasRead = true;
             returnValue = _storedValue;
+            CacheNext();
         }
-        CacheNext();
+        else
+        {
+            returnValue = _cachedValue;
+            CacheNext();
+        }
         
         offset = _dataOffset;
         return returnValue;
@@ -328,8 +362,14 @@ internal class LongChimpDecoderImpl : IChimpDecoderImpl
     
     private void CacheNext()
     {
+        if (_dataOffset >= (_data?.Length ?? 0))
+        {
+            _hasNext = false;
+            return;
+        }
         ReadNext();
-        if (_storedValues[_current] == long.MinValue)
+        _cachedValue = _storedValues[_current];
+        if (_cachedValue == _endMarker)
         {
             _hasNext = false;
         }
@@ -464,7 +504,12 @@ internal class LongChimpDecoderImpl : IChimpDecoderImpl
 
 internal class FloatChimpDecoderImpl : IChimpDecoderImpl
 {
-    private readonly IntChimpDecoderImpl _impl = new();
+    private readonly IntChimpDecoderImpl _impl;
+    
+    public FloatChimpDecoderImpl()
+    {
+        _impl = new IntChimpDecoderImpl(BitConverter.SingleToInt32Bits(float.NaN));
+    }
     
     public float ReadFloat(byte[] buffer, ref int offset)
     {
@@ -481,7 +526,12 @@ internal class FloatChimpDecoderImpl : IChimpDecoderImpl
 
 internal class DoubleChimpDecoderImpl : IChimpDecoderImpl
 {
-    private readonly LongChimpDecoderImpl _impl = new();
+    private readonly LongChimpDecoderImpl _impl;
+    
+    public DoubleChimpDecoderImpl()
+    {
+        _impl = new LongChimpDecoderImpl(BitConverter.DoubleToInt64Bits(double.NaN));
+    }
     
     public double ReadDouble(byte[] buffer, ref int offset)
     {
