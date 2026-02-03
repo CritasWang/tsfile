@@ -4,6 +4,9 @@
 
 set -e
 
+# Configuration
+TEST_FILES_DIR="/tmp/interop-test-files"
+
 echo "========================================="
 echo "TSFile Interoperability Test Suite"
 echo "========================================="
@@ -18,7 +21,7 @@ echo ""
 echo "Step 2: Generating test files..."
 mvn exec:java
 
-FILE_COUNT=$(find /tmp/interop-test-files -name "*.tsfile" 2>/dev/null | wc -l)
+FILE_COUNT=$(find "$TEST_FILES_DIR" -name "*.tsfile" 2>/dev/null | wc -l)
 echo "Generated $FILE_COUNT test files"
 echo ""
 
