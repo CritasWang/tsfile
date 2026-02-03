@@ -18,15 +18,14 @@
  */
 
 using Apache.TsFile.Enums;
+using SharpCompress.Compressors.Xz;
 
 namespace Apache.TsFile.Compress;
 
 /// <summary>
 /// LZMA2 compressor implementation.
-/// Note: LZMA2 is not yet fully implemented due to lack of compatible .NET 10 library.
-/// Java uses org.tukaani.xz (XZ format with LZMA2 algorithm).
-/// Available C# libraries either don't support .NET 10 or only support decompression.
-/// Use ZSTD, LZ4, or GZIP compression instead for production use.
+/// Note: Only decompression is supported. SharpCompress provides read-only XZ/LZMA2 support.
+/// For compression, use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.
 /// </summary>
 public class Lzma2Compressor : ICompressor, IUncompressor
 {
@@ -35,22 +34,25 @@ public class Lzma2Compressor : ICompressor, IUncompressor
     public byte[] Compress(byte[] data)
     {
         throw new NotSupportedException(
-            "LZMA2 compression is not yet implemented. " +
-            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
+            "LZMA2 compression is not supported - only decompression is available. " +
+            "SharpCompress library provides read-only XZ/LZMA2 support. " +
+            "For writing data, use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public byte[] Compress(byte[] data, int offset, int length)
     {
         throw new NotSupportedException(
-            "LZMA2 compression is not yet implemented. " +
-            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
+            "LZMA2 compression is not supported - only decompression is available. " +
+            "SharpCompress library provides read-only XZ/LZMA2 support. " +
+            "For writing data, use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public int Compress(byte[] data, int offset, int length, byte[] compressed)
     {
         throw new NotSupportedException(
-            "LZMA2 compression is not yet implemented. " +
-            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
+            "LZMA2 compression is not supported - only decompression is available. " +
+            "SharpCompress library provides read-only XZ/LZMA2 support. " +
+            "For writing data, use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public int GetMaxCompressedSize(int uncompressedSize)
@@ -61,22 +63,33 @@ public class Lzma2Compressor : ICompressor, IUncompressor
     
     public byte[] Uncompress(byte[] data)
     {
-        throw new NotSupportedException(
-            "LZMA2 decompression is not yet implemented. " +
-            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
+        return Uncompress(data, 0, data.Length);
     }
     
     public byte[] Uncompress(byte[] data, int offset, int length)
     {
-        throw new NotSupportedException(
-            "LZMA2 decompression is not yet implemented. " +
-            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
+        try
+        {
+            using var inputStream = new MemoryStream(data, offset, length);
+            using var outputStream = new MemoryStream();
+            using (var xzStream = new XZStream(inputStream))
+            {
+                xzStream.CopyTo(outputStream);
+            }
+            return outputStream.ToArray();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidDataException(
+                $"Failed to decompress LZMA2 data. Data may be corrupted or not in XZ format. Error: {ex.Message}", 
+                ex);
+        }
     }
     
     public int Uncompress(byte[] data, int offset, int length, byte[] output, int outputOffset)
     {
-        throw new NotSupportedException(
-            "LZMA2 decompression is not yet implemented. " +
-            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
+        var result = Uncompress(data, offset, length);
+        Array.Copy(result, 0, output, outputOffset, result.Length);
+        return result.Length;
     }
 }
