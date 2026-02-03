@@ -49,7 +49,7 @@ The generator creates:
 
 ### Encodings (varies by data type)
 - PLAIN (all types)
-- RLE (all types except TEXT)
+- RLE (INT32, INT64, FLOAT, DOUBLE, BOOLEAN)
 - TS_2DIFF (INT32, INT64, FLOAT, DOUBLE)
 - GORILLA (INT32, INT64, FLOAT, DOUBLE)
 - GORILLA_V1 (FLOAT, DOUBLE)
