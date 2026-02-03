@@ -16,8 +16,7 @@ mvn clean install -DskipTests
 echo ""
 
 echo "Step 2: Generating test files..."
-java -cp "target/classes:$(find ~/.m2/repository -name '*.jar' -printf '%p:')" \
-  org.apache.tsfile.interop.TsFileInteropGenerator
+mvn exec:java
 
 FILE_COUNT=$(find /tmp/interop-test-files -name "*.tsfile" 2>/dev/null | wc -l)
 echo "Generated $FILE_COUNT test files"
