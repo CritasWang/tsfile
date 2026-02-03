@@ -139,7 +139,7 @@ internal class IntChimpEncoderImpl : IChimpEncoderImpl
     private bool _firstValueWasWritten = false;
     
     private byte _buffer = 0;
-    private int _bitsLeft = 8;
+    internal int _bitsLeft = 8;
     internal readonly MemoryStream _byteStream = new();
     
     public void EncodeInt(int value)
@@ -270,7 +270,7 @@ internal class IntChimpEncoderImpl : IChimpEncoderImpl
         }
     }
     
-    private void FlipByte()
+    internal void FlipByte()
     {
         if (_bitsLeft == 0)
         {
@@ -292,7 +292,7 @@ internal class IntChimpEncoderImpl : IChimpEncoderImpl
         Reset();
     }
     
-    private void Reset()
+    internal void Reset()
     {
         _firstValueWasWritten = false;
         _storedLeadingZeros = VALUE_BITS_LENGTH_32BIT + 1;
@@ -338,7 +338,7 @@ internal class LongChimpEncoderImpl : IChimpEncoderImpl
     private bool _firstValueWasWritten = false;
     
     private byte _buffer = 0;
-    private int _bitsLeft = 8;
+    internal int _bitsLeft = 8;
     internal readonly MemoryStream _byteStream = new();
     
     public void EncodeLong(long value)
@@ -469,7 +469,7 @@ internal class LongChimpEncoderImpl : IChimpEncoderImpl
         }
     }
     
-    private void FlipByte()
+    internal void FlipByte()
     {
         if (_bitsLeft == 0)
         {
@@ -491,7 +491,7 @@ internal class LongChimpEncoderImpl : IChimpEncoderImpl
         Reset();
     }
     
-    private void Reset()
+    internal void Reset()
     {
         _firstValueWasWritten = false;
         _storedLeadingZeros = VALUE_BITS_LENGTH_64BIT + 1;
@@ -522,9 +522,13 @@ internal class FloatChimpEncoderImpl : IChimpEncoderImpl
     {
         int endMarker = BitConverter.SingleToInt32Bits(float.NaN);
         _impl.EncodeInt(endMarker);
+        _impl._bitsLeft = 0;
+        _impl.FlipByte();
         
         var bytes = _impl._byteStream.ToArray();
         stream.Write(bytes, 0, bytes.Length);
+        
+        _impl.Reset();
     }
     
     public void EncodeInt(int value) => throw new NotSupportedException();
@@ -548,9 +552,13 @@ internal class DoubleChimpEncoderImpl : IChimpEncoderImpl
     {
         long endMarker = BitConverter.DoubleToInt64Bits(double.NaN);
         _impl.EncodeLong(endMarker);
+        _impl._bitsLeft = 0;
+        _impl.FlipByte();
         
         var bytes = _impl._byteStream.ToArray();
         stream.Write(bytes, 0, bytes.Length);
+        
+        _impl.Reset();
     }
     
     public void EncodeInt(int value) => throw new NotSupportedException();
