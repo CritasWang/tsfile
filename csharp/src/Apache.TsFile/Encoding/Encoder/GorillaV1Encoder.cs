@@ -130,7 +130,7 @@ public class GorillaV1Encoder : IEncoder
             int leadingZeros = CountLeadingZeros(xor, bitWidth);
             int tailingZeros = CountTrailingZeros(xor, bitWidth);
             
-            if (leadingZeros >= _leadingZeroNum && tailingZeros >= _tailingZeroNum && _flag)
+            if (leadingZeros >= _leadingZeroNum && tailingZeros >= _tailingZeroNum)
             {
                 // Use previous block: write '0' control bit
                 WriteBit(false);

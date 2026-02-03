@@ -169,7 +169,7 @@ public class RegularEncoder : IEncoder
             bitmap = CreateIntBitmap(_intData, _writeIndex, minDeltaBase, newBlockSize);
         }
         
-        WriteInt(stream, isMissingPoint ? 1 : 0);
+        stream.WriteByte((byte)(isMissingPoint ? 1 : 0));
         
         if (isMissingPoint && bitmap != null)
         {
@@ -223,7 +223,7 @@ public class RegularEncoder : IEncoder
             bitmap = CreateLongBitmap(_longData, _writeIndex, minDeltaBase, newBlockSize);
         }
         
-        WriteInt(stream, isMissingPoint ? 1 : 0);
+        stream.WriteByte((byte)(isMissingPoint ? 1 : 0));
         
         if (isMissingPoint && bitmap != null)
         {
