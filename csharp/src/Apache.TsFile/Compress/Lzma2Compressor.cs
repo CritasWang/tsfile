@@ -23,8 +23,10 @@ namespace Apache.TsFile.Compress;
 
 /// <summary>
 /// LZMA2 compressor implementation.
-/// Note: LZMA2 is currently not implemented due to library API complexity.
-/// Use GZIP, LZ4, or ZSTD compression instead.
+/// Note: LZMA2 is not yet fully implemented due to lack of compatible .NET 10 library.
+/// Java uses org.tukaani.xz (XZ format with LZMA2 algorithm).
+/// Available C# libraries either don't support .NET 10 or only support decompression.
+/// Use ZSTD, LZ4, or GZIP compression instead for production use.
 /// </summary>
 public class Lzma2Compressor : ICompressor, IUncompressor
 {
@@ -32,36 +34,49 @@ public class Lzma2Compressor : ICompressor, IUncompressor
     
     public byte[] Compress(byte[] data)
     {
-        throw new NotImplementedException("LZMA2 compression is not yet implemented. Use GZIP, LZ4, or ZSTD instead.");
+        throw new NotSupportedException(
+            "LZMA2 compression is not yet implemented. " +
+            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public byte[] Compress(byte[] data, int offset, int length)
     {
-        throw new NotImplementedException("LZMA2 compression is not yet implemented. Use GZIP, LZ4, or ZSTD instead.");
+        throw new NotSupportedException(
+            "LZMA2 compression is not yet implemented. " +
+            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public int Compress(byte[] data, int offset, int length, byte[] compressed)
     {
-        throw new NotImplementedException("LZMA2 compression is not yet implemented. Use GZIP, LZ4, or ZSTD instead.");
+        throw new NotSupportedException(
+            "LZMA2 compression is not yet implemented. " +
+            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public int GetMaxCompressedSize(int uncompressedSize)
     {
-        return uncompressedSize + (uncompressedSize / 3) + 128;
+        // Conservative estimate for XZ/LZMA2 format
+        return 100 + uncompressedSize;
     }
     
     public byte[] Uncompress(byte[] data)
     {
-        throw new NotImplementedException("LZMA2 decompression is not yet implemented. Use GZIP, LZ4, or ZSTD instead.");
+        throw new NotSupportedException(
+            "LZMA2 decompression is not yet implemented. " +
+            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public byte[] Uncompress(byte[] data, int offset, int length)
     {
-        throw new NotImplementedException("LZMA2 decompression is not yet implemented. Use GZIP, LZ4, or ZSTD instead.");
+        throw new NotSupportedException(
+            "LZMA2 decompression is not yet implemented. " +
+            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
     
     public int Uncompress(byte[] data, int offset, int length, byte[] output, int outputOffset)
     {
-        throw new NotImplementedException("LZMA2 decompression is not yet implemented. Use GZIP, LZ4, or ZSTD instead.");
+        throw new NotSupportedException(
+            "LZMA2 decompression is not yet implemented. " +
+            "Use ZSTD (recommended), LZ4 (fast), or GZIP (widely compatible) instead.");
     }
 }
