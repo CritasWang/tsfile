@@ -26,19 +26,51 @@ namespace BasicExample;
 
 class Program
 {
-    static void Main(string[] args)
+    static int Main(string[] args)
     {
         Console.WriteLine("Apache TSFile C# Library - Basic Example\n");
         
-        var filePath = "example.tsfile";
+        // Handle command line arguments for interop testing
+        if (args.Length >= 2)
+        {
+            var command = args[0].ToLower();
+            var filePath = args[1];
+            
+            try
+            {
+                if (command == "read")
+                {
+                    return ReadFileExample(filePath) ? 0 : 1;
+                }
+                else if (command == "write")
+                {
+                    WriteExample(filePath);
+                    Console.WriteLine($"Successfully wrote to {filePath}");
+                    return 0;
+                }
+                else
+                {
+                    Console.WriteLine($"Unknown command: {command}. Use 'read' or 'write'.");
+                    return 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error: {ex.Message}");
+                Console.Error.WriteLine(ex.StackTrace);
+                return 1;
+            }
+        }
+        
+        var defaultFilePath = "example.tsfile";
         
         // Example 1: Write data to TSFile
         Console.WriteLine("Writing data to TSFile...");
-        WriteExample(filePath);
+        WriteExample(defaultFilePath);
         
         // Example 2: Read data from TSFile
         Console.WriteLine("\nReading data from TSFile...");
-        ReadExample(filePath);
+        ReadExample(defaultFilePath);
         
         // Example 3: Write with compression
         Console.WriteLine("\nWriting compressed data...");
@@ -47,8 +79,54 @@ class Program
         Console.WriteLine("\nExamples completed successfully!");
         
         // Cleanup
-        File.Delete(filePath);
+        File.Delete(defaultFilePath);
         File.Delete("compressed.tsfile");
+        
+        return 0;
+    }
+    
+    /// <summary>
+    /// Reads a TsFile and prints its contents. Returns true on success.
+    /// </summary>
+    static bool ReadFileExample(string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            Console.Error.WriteLine($"File not found: {filePath}");
+            return false;
+        }
+        
+        Console.WriteLine($"Reading file: {filePath}");
+        
+        using var reader = new TsFileReader(filePath);
+        
+        // Print available schemas
+        Console.WriteLine($"Found {reader.Schemas.Count} device(s):");
+        foreach (var schema in reader.Schemas.Values)
+        {
+            Console.WriteLine($"  - {schema.TableName} with {schema.MeasurementCount} measurement(s)");
+            foreach (var measurement in schema.Measurements)
+            {
+                Console.WriteLine($"      - {measurement.MeasurementName}: {measurement.DataType}");
+            }
+        }
+        
+        // Query and print data for each device
+        foreach (var deviceName in reader.Schemas.Keys)
+        {
+            var result = reader.Query(deviceName);
+            Console.WriteLine($"\nDevice '{deviceName}': {result.Timestamps.Count} rows");
+            
+            if (result.Timestamps.Count > 0)
+            {
+                Console.WriteLine($"  Measurements: {string.Join(", ", result.MeasurementData.Keys)}");
+                Console.WriteLine($"  First timestamp: {result.Timestamps[0]}");
+                Console.WriteLine($"  Last timestamp: {result.Timestamps[^1]}");
+            }
+        }
+        
+        Console.WriteLine("\nFile read successfully!");
+        return true;
     }
     
     static void WriteExample(string filePath)
