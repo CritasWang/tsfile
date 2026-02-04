@@ -120,7 +120,8 @@ jobs:
       - name: Create Java test file
         working-directory: ./java/examples
         run: |
-          # Run Java example to create test file (uses hardcoded path Tablet.tsfile)
+          # Run Java example to create test file
+          # Note: Java example uses hardcoded path 'Tablet.tsfile' (this is the upstream Java example behavior)
           mvn exec:java -Dexec.mainClass="org.apache.tsfile.TsFileWriteWithTablet"
           # Verify file was created and copy to root
           ls -la Tablet.tsfile
