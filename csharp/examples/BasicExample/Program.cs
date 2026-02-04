@@ -98,6 +98,92 @@ class Program
         
         Console.WriteLine($"Reading file: {filePath}");
         
+        // Detect file version and use appropriate reader
+        var version = DetectTsFileVersion(filePath);
+        Console.WriteLine($"Detected TSFile version: {version}");
+        
+        if (version == 4)
+        {
+            return ReadFileV4Example(filePath);
+        }
+        else
+        {
+            return ReadFileV3Example(filePath);
+        }
+    }
+    
+    /// <summary>
+    /// Detects the version of a TsFile by reading its header.
+    /// </summary>
+    static byte DetectTsFileVersion(string filePath)
+    {
+        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+        using var reader = new BinaryReader(fs);
+        
+        // Read magic string (6 bytes)
+        var magic = reader.ReadBytes(6);
+        var expectedMagic = new byte[] { 0x54, 0x73, 0x46, 0x69, 0x6C, 0x65 }; // "TsFile"
+        
+        if (!magic.SequenceEqual(expectedMagic))
+            throw new InvalidDataException("Invalid TSFile magic string");
+        
+        // Read version byte
+        return reader.ReadByte();
+    }
+    
+    /// <summary>
+    /// Reads a V4 format TsFile using TsFileReaderV4.
+    /// </summary>
+    static bool ReadFileV4Example(string filePath)
+    {
+        using var reader = new TsFileReaderV4(filePath);
+        
+        // Print available schemas
+        Console.WriteLine($"Found {reader.Schemas.Count} table(s):");
+        foreach (var schema in reader.Schemas.Values)
+        {
+            Console.WriteLine($"  - {schema.TableName} with {schema.ColumnSchemas?.Count ?? 0} column(s)");
+            if (schema.ColumnSchemas != null)
+            {
+                foreach (var column in schema.ColumnSchemas)
+                {
+                    Console.WriteLine($"      - {column.Name}: {column.DataType} ({column.Category})");
+                }
+            }
+        }
+        
+        // Query and print data for each table
+        foreach (var tableName in reader.Schemas.Keys)
+        {
+            var result = reader.Query(tableName);
+            var totalRows = result.DeviceTimestamps.Values.Sum(ts => ts.Count);
+            Console.WriteLine($"\nTable '{tableName}': {totalRows} total rows across {result.DeviceTimestamps.Count} device(s)");
+            
+            foreach (var deviceId in result.DeviceTimestamps.Keys)
+            {
+                var timestamps = result.DeviceTimestamps[deviceId];
+                if (timestamps.Count > 0)
+                {
+                    Console.WriteLine($"  Device '{deviceId}': {timestamps.Count} rows");
+                    Console.WriteLine($"    First timestamp: {timestamps[0]}");
+                    Console.WriteLine($"    Last timestamp: {timestamps[^1]}");
+                    if (result.DeviceData.ContainsKey(deviceId))
+                    {
+                        Console.WriteLine($"    Columns: {string.Join(", ", result.DeviceData[deviceId].Keys)}");
+                    }
+                }
+            }
+        }
+        
+        Console.WriteLine("\nFile read successfully!");
+        return true;
+    }
+    
+    /// <summary>
+    /// Reads a V3 format TsFile using TsFileReader.
+    /// </summary>
+    static bool ReadFileV3Example(string filePath)
+    {
         using var reader = new TsFileReader(filePath);
         
         // Print available schemas
