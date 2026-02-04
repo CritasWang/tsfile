@@ -120,13 +120,19 @@ jobs:
       - name: Create Java test file
         working-directory: ./java/examples
         run: |
-          # Compile and run Java example to create test file
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.TsFileWrite" -Dexec.args="../../interop-test.tsfile" || true
+          # Run Java example to create test file (uses hardcoded path Tablet.tsfile)
+          mvn exec:java -Dexec.mainClass="org.apache.tsfile.TsFileWriteWithTablet"
+          # Verify file was created and copy to root
+          ls -la Tablet.tsfile
+          cp Tablet.tsfile ../../interop-test.tsfile
       
       - name: Read Java file with C#
         working-directory: ./csharp
         run: |
-          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release -- read ../../interop-test.tsfile || echo "Java interop test file not found (expected for initial implementation)"
+          # Verify file was created
+          ls -la ../interop-test.tsfile
+          # Read the Java-created file with C#
+          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release -- read ../interop-test.tsfile
       
       - name: Create C# test file and read with Java
         working-directory: ./csharp
