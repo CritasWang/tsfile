@@ -140,6 +140,12 @@ class Program
         
         // Print available schemas
         Console.WriteLine($"Found {reader.Schemas.Count} table(s):");
+        if (reader.Schemas.Count == 0)
+        {
+            Console.Error.WriteLine("Error: No tables found in file");
+            return false;
+        }
+        
         foreach (var schema in reader.Schemas.Values)
         {
             Console.WriteLine($"  - {schema.TableName} with {schema.ColumnSchemas?.Count ?? 0} column(s)");
@@ -152,27 +158,48 @@ class Program
             }
         }
         
+        // Print device index information
+        Console.WriteLine($"\nFound {reader.TableIndexNodes.Count} table index node(s):");
+        foreach (var kvp in reader.TableIndexNodes)
+        {
+            Console.WriteLine($"  - Table '{kvp.Key}': {kvp.Value.Entries.Count} device(s)");
+            foreach (var entry in kvp.Value.Entries)
+            {
+                if (entry is Apache.TsFile.IO.DeviceMetadataIndexEntry deviceEntry)
+                {
+                    Console.WriteLine($"      - Device: {deviceEntry.DeviceID}");
+                }
+            }
+        }
+        
         // Query and print data for each table
         foreach (var tableName in reader.Schemas.Keys)
         {
-            var result = reader.Query(tableName);
-            var deviceCount = result.DeviceTimestamps.Count;
-            var totalRows = result.DeviceTimestamps.Values.Sum(ts => ts.Count);
-            Console.WriteLine($"\nTable '{tableName}': {totalRows} total rows across {deviceCount} device(s)");
-            
-            foreach (var deviceId in result.DeviceTimestamps.Keys)
+            try
             {
-                var timestamps = result.DeviceTimestamps[deviceId];
-                if (timestamps.Count > 0)
+                var result = reader.Query(tableName);
+                var deviceCount = result.DeviceTimestamps.Count;
+                var totalRows = result.DeviceTimestamps.Values.Sum(ts => ts.Count);
+                Console.WriteLine($"\nTable '{tableName}': {totalRows} total rows across {deviceCount} device(s)");
+                
+                foreach (var deviceId in result.DeviceTimestamps.Keys)
                 {
-                    Console.WriteLine($"  Device '{deviceId}': {timestamps.Count} rows");
-                    Console.WriteLine($"    First timestamp: {timestamps[0]}");
-                    Console.WriteLine($"    Last timestamp: {timestamps[^1]}");
-                    if (result.DeviceData.ContainsKey(deviceId))
+                    var timestamps = result.DeviceTimestamps[deviceId];
+                    if (timestamps.Count > 0)
                     {
-                        Console.WriteLine($"    Columns: {string.Join(", ", result.DeviceData[deviceId].Keys)}");
+                        Console.WriteLine($"  Device '{deviceId}': {timestamps.Count} rows");
+                        Console.WriteLine($"    First timestamp: {timestamps[0]}");
+                        Console.WriteLine($"    Last timestamp: {timestamps[^1]}");
+                        if (result.DeviceData.ContainsKey(deviceId))
+                        {
+                            Console.WriteLine($"    Columns: {string.Join(", ", result.DeviceData[deviceId].Keys)}");
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\nNote: Data query for table '{tableName}' is not fully implemented yet: {ex.Message}");
             }
         }
         

@@ -120,12 +120,12 @@ jobs:
       - name: Create Java test file
         working-directory: ./java/examples
         run: |
-          # Run Java example to create test file
-          # Note: Java example uses hardcoded path 'Tablet.tsfile' (this is the upstream Java example behavior)
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.TsFileWriteWithTablet"
+          # Run Java V4 table-model example to create test file
+          # This uses the ITsFileWriter API with proper table schemas
+          mvn exec:java -Dexec.mainClass="org.apache.tsfile.v4.WriteTabletWithITsFileWriter"
           # Verify file was created and copy to root
-          ls -la Tablet.tsfile
-          cp Tablet.tsfile ../../interop-test.tsfile
+          ls -la test.tsfile
+          cp test.tsfile ../../interop-test.tsfile
       
       - name: Read Java file with C#
         working-directory: ./csharp
