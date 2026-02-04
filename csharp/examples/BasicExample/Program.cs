@@ -117,7 +117,7 @@ class Program
     /// </summary>
     static byte DetectTsFileVersion(string filePath)
     {
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var reader = new BinaryReader(fs);
         
         // Read magic string (6 bytes)
@@ -156,8 +156,9 @@ class Program
         foreach (var tableName in reader.Schemas.Keys)
         {
             var result = reader.Query(tableName);
+            var deviceCount = result.DeviceTimestamps.Count;
             var totalRows = result.DeviceTimestamps.Values.Sum(ts => ts.Count);
-            Console.WriteLine($"\nTable '{tableName}': {totalRows} total rows across {result.DeviceTimestamps.Count} device(s)");
+            Console.WriteLine($"\nTable '{tableName}': {totalRows} total rows across {deviceCount} device(s)");
             
             foreach (var deviceId in result.DeviceTimestamps.Keys)
             {
