@@ -33,16 +33,16 @@ class Program
         // Handle command line arguments for interop testing
         if (args.Length >= 2)
         {
-            var command = args[0].ToLower();
+            var command = args[0];
             var filePath = args[1];
             
             try
             {
-                if (command == "read")
+                if (command.Equals("read", StringComparison.OrdinalIgnoreCase))
                 {
                     return ReadFileExample(filePath) ? 0 : 1;
                 }
-                else if (command == "write")
+                else if (command.Equals("write", StringComparison.OrdinalIgnoreCase))
                 {
                     WriteExample(filePath);
                     Console.WriteLine($"Successfully wrote to {filePath}");
