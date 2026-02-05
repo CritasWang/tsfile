@@ -132,7 +132,8 @@ jobs:
         working-directory: ./java/interop-tests
         run: |
           echo "=== Generating Java V4 test files ==="
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.V4TestFileGenerator" -Dexec.args="/tmp/interop-tests/java-v4" -q
+          mvn -Dexec.mainClass="org.apache.tsfile.interop.V4TestFileGenerator" -Dexec.args="/tmp/interop-tests/java-v4" exec:java
+          echo "=== Files generated ==="
           ls -la /tmp/interop-tests/java-v4/
 
       # Step 2: C# reads Java V4 files
