@@ -138,22 +138,47 @@ class Program
     {
         using var reader = new TsFileReaderV4(filePath);
         
-        // Print available schemas
-        Console.WriteLine($"Found {reader.Schemas.Count} table(s):");
-        if (reader.Schemas.Count == 0)
+        // Get table names from both schemas and index nodes
+        var tableNames = reader.GetTableNames().ToList();
+        
+        Console.WriteLine($"Found {tableNames.Count} table(s):");
+        if (tableNames.Count == 0)
         {
             Console.Error.WriteLine("Error: No tables found in file");
             return false;
         }
         
-        foreach (var schema in reader.Schemas.Values)
+        foreach (var tableName in tableNames)
         {
-            Console.WriteLine($"  - {schema.TableName} with {schema.ColumnSchemas?.Count ?? 0} column(s)");
-            if (schema.ColumnSchemas != null)
+            var schema = reader.GetTableSchema(tableName);
+            if (schema != null)
             {
-                foreach (var column in schema.ColumnSchemas)
+                Console.WriteLine($"  - {schema.TableName} with {schema.ColumnSchemas?.Count ?? 0} column(s)");
+                if (schema.ColumnSchemas != null)
                 {
-                    Console.WriteLine($"      - {column.Name}: {column.DataType} ({column.Category})");
+                    foreach (var column in schema.ColumnSchemas)
+                    {
+                        Console.WriteLine($"      - {column.Name}: {column.DataType} ({column.Category})");
+                    }
+                }
+            }
+            else
+            {
+                // Tree model file - no explicit schema, but table exists in index
+                Console.WriteLine($"  - {tableName} (tree model, no explicit schema)");
+                
+                // Show devices from index node
+                if (reader.TableIndexNodes.TryGetValue(tableName, out var indexNode))
+                {
+                    Console.WriteLine($"    Devices: {indexNode.Entries.Count}");
+                    foreach (var entry in indexNode.Entries.Take(5))
+                    {
+                        Console.WriteLine($"      - {entry.GetCompareKey()}");
+                    }
+                    if (indexNode.Entries.Count > 5)
+                    {
+                        Console.WriteLine($"      ... and {indexNode.Entries.Count - 5} more");
+                    }
                 }
             }
         }
