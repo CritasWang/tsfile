@@ -541,8 +541,7 @@ public class TsFileReaderV4 : IDisposable
     private string ReadVarIntString()
     {
         var length = ReadSignedVarInt();
-        if (length < 0) return string.Empty; // null marker
-        if (length == 0) return string.Empty;
+        if (length <= 0) return string.Empty; // null marker or empty string
         var bytes = _reader.ReadBytes(length);
         return System.Text.Encoding.UTF8.GetString(bytes);
     }

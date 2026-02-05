@@ -502,14 +502,6 @@ public class TsFileWriterV4 : IDisposable
     }
     
     /// <summary>
-    /// Writes unsigned varint (for counts and sizes).
-    /// </summary>
-    private void WriteUnsignedVarInt(int value)
-    {
-        WriteVarInt(value);
-    }
-    
-    /// <summary>
     /// Writes a signed varint using zigzag encoding (Java compatible).
     /// This matches Java's ReadWriteForEncodingUtils.writeVarInt().
     /// </summary>
@@ -517,7 +509,7 @@ public class TsFileWriterV4 : IDisposable
     {
         // Zigzag encode: (value << 1) ^ (value >> 31)
         int uValue = (value << 1) ^ (value >> 31);
-        WriteUnsignedVarInt(uValue);
+        WriteVarInt(uValue); // Use WriteVarInt directly for unsigned encoding
     }
     
     /// <summary>
