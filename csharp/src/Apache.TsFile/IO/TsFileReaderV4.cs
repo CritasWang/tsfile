@@ -193,40 +193,18 @@ public class TsFileReaderV4 : IDisposable
         
         for (int i = 0; i < tableSchemaNum; i++)
         {
-            // Table name is stored as key in the map, using VarIntString
             var tableName = ReadVarIntString();
-            
-            // Read TableSchema - column count is inside the schema
-            var columnCount = ReadVarInt(); // ReadWriteForEncodingUtils.readUnsignedVarInt
+            var columnCount = ReadVarInt();
             var tableSchema = new TableSchema(tableName);
             tableSchema.ColumnSchemas = new List<ColumnSchema>();
             
             for (int j = 0; j < columnCount; j++)
             {
-                // Read MeasurementSchema
-                // Java uses ReadWriteIOUtils.write(measurementName, outputStream) - 4-byte int prefix
-                var columnName = ReadIntPrefixedString();
-                
-                // dataType is written as ReadWriteIOUtils.write(dataType.serialize(), outputStream) - byte
+                var columnName = ReadVarIntString();
                 var dataType = (TsDataType)_reader.ReadByte();
-                
-                // encoding is written as ReadWriteIOUtils.write(encoding, outputStream) - byte
                 var encoding = (TsEncoding)_reader.ReadByte();
-                
-                // compression is written as ReadWriteIOUtils.write(compressionType.serialize(), outputStream) - byte
                 var compression = (CompressionType)_reader.ReadByte();
-                
-                // Read props map - int size + string key-value pairs
-                var propsSize = ReadInt32BigEndian();
-                for (int p = 0; p < propsSize; p++)
-                {
-                    ReadIntPrefixedString(); // key
-                    ReadIntPrefixedString(); // value
-                }
-                
-                // Read ColumnCategory - Java writes as ReadWriteIOUtils.write(columnCategory.ordinal(), out) - 4-byte int
-                var categoryOrdinal = ReadInt32BigEndian();
-                var category = (ColumnCategory)categoryOrdinal;
+                var category = (ColumnCategory)_reader.ReadByte();
                 
                 var columnSchema = new ColumnSchema(columnName, category, dataType, encoding, compression);
                 tableSchema.ColumnSchemas.Add(columnSchema);
@@ -248,58 +226,34 @@ public class TsFileReaderV4 : IDisposable
     private void ReadDataFromIndexNode(QueryResultV4 result, TableSchema schema, 
         MetadataIndexNode node, List<string>? columnNames, long? startTime, long? endTime)
     {
-        // For LEAF_DEVICE nodes, entries point directly to TimeseriesMetadata
-        // For INTERNAL_DEVICE nodes, entries point to other index nodes
-        var isLeafDevice = node.NodeType == MetadataIndexNodeType.LeafDevice;
-        var isLeafMeasurement = node.NodeType == MetadataIndexNodeType.LeafMeasurement;
-        
         foreach (var entry in node.Entries)
         {
             if (entry.IsDeviceLevel)
             {
+                // This is a device entry, read its measurement index node
                 var deviceEntry = entry as DeviceMetadataIndexEntry;
                 if (deviceEntry != null)
                 {
-                    if (isLeafDevice)
-                    {
-                        // For LEAF_DEVICE, offset points directly to TimeseriesMetadata
-                        _fileStream.Position = deviceEntry.Offset;
-                        ReadTimeseriesMetadataAndData(result, schema, deviceEntry.DeviceID, "", 
-                            columnNames, startTime, endTime);
-                    }
-                    else
-                    {
-                        // For INTERNAL_DEVICE, offset points to measurement-level index node
-                        _fileStream.Position = deviceEntry.Offset;
-                        var measurementNode = MetadataIndexNode.DeserializeV4(_reader, isDeviceLevel: false,
-                            ReadVarInt, ReadVarIntString, ReadInt64BigEndian);
-                        
-                        // Recursively read data from the measurement node
-                        ReadTimeseriesData(result, schema, deviceEntry.DeviceID, measurementNode, 
-                            columnNames, startTime, endTime);
-                    }
+                    // Navigate to the measurement index node
+                    _fileStream.Position = deviceEntry.Offset;
+                    var measurementNode = MetadataIndexNode.DeserializeV4(_reader, isDeviceLevel: false,
+                        ReadVarInt, ReadVarIntString, ReadInt64BigEndian);
+                    
+                    // Read timeseries metadata for each measurement
+                    ReadTimeseriesData(result, schema, deviceEntry.DeviceID, measurementNode, 
+                        columnNames, startTime, endTime);
                 }
             }
             else
             {
+                // This is a measurement entry, directly read timeseries metadata
                 var measurementEntry = entry as MeasurementMetadataIndexEntry;
                 if (measurementEntry != null)
                 {
-                    if (isLeafMeasurement)
-                    {
-                        // For LEAF_MEASUREMENT, offset points to TimeseriesMetadata
-                        _fileStream.Position = measurementEntry.Offset;
-                        ReadTimeseriesMetadataAndData(result, schema, null, measurementEntry.Name, 
-                            columnNames, startTime, endTime);
-                    }
-                    else
-                    {
-                        // For INTERNAL_MEASUREMENT, offset points to more measurement index nodes
-                        _fileStream.Position = measurementEntry.Offset;
-                        var subNode = MetadataIndexNode.DeserializeV4(_reader, isDeviceLevel: false,
-                            ReadVarInt, ReadVarIntString, ReadInt64BigEndian);
-                        ReadDataFromIndexNode(result, schema, subNode, columnNames, startTime, endTime);
-                    }
+                    // Read timeseries metadata at the offset
+                    _fileStream.Position = measurementEntry.Offset;
+                    ReadTimeseriesMetadataAndData(result, schema, null, measurementEntry.Name, 
+                        columnNames, startTime, endTime);
                 }
             }
         }
@@ -528,11 +482,7 @@ public class TsFileReaderV4 : IDisposable
         }
     }
     
-    /// <summary>
-    /// Reads an unsigned varint from the stream.
-    /// Used for counts (tableIndexNodeNum, tableSchemaNum, etc.)
-    /// </summary>
-    private int ReadUnsignedVarInt()
+    private int ReadVarInt()
     {
         int result = 0;
         int shift = 0;
@@ -548,41 +498,10 @@ public class TsFileReaderV4 : IDisposable
         return result;
     }
     
-    /// <summary>
-    /// Reads a signed varint from the stream using zigzag decoding.
-    /// Used for string lengths in readVarIntString.
-    /// </summary>
-    private int ReadSignedVarInt()
-    {
-        int value = ReadUnsignedVarInt();
-        // Zigzag decode: (value >>> 1) ^ -(value & 1)
-        return (int)((uint)value >> 1) ^ -(value & 1);
-    }
-    
-    // Alias for backward compatibility - most counts use unsigned varint
-    private int ReadVarInt() => ReadUnsignedVarInt();
-    
-    /// <summary>
-    /// Reads a variable-length string.
-    /// Uses signed varint for length (matching Java's ReadWriteIOUtils.readVarIntString).
-    /// </summary>
     private string ReadVarIntString()
     {
-        var length = ReadSignedVarInt();
-        if (length < 0) return string.Empty; // null in Java becomes empty string
-        if (length == 0) return string.Empty;
-        var bytes = _reader.ReadBytes(length);
-        return System.Text.Encoding.UTF8.GetString(bytes);
-    }
-    
-    /// <summary>
-    /// Reads a string with 4-byte int length prefix (matching Java's ReadWriteIOUtils.readString).
-    /// </summary>
-    private string ReadIntPrefixedString()
-    {
-        var length = ReadInt32BigEndian();
-        if (length < 0) return string.Empty; // null in Java
-        if (length == 0) return string.Empty;
+        var length = ReadVarInt();
+        if (length <= 0) return string.Empty;
         var bytes = _reader.ReadBytes(length);
         return System.Text.Encoding.UTF8.GetString(bytes);
     }

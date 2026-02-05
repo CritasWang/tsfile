@@ -21,27 +21,26 @@ namespace Apache.TsFile.Enums;
 
 /// <summary>
 /// Types of metadata index nodes in TsFile v4 format.
-/// Matches Java's MetadataIndexNodeType enum values.
 /// </summary>
 public enum MetadataIndexNodeType : byte
 {
     /// <summary>
-    /// Internal device-level index node. Points to other device-level nodes.
+    /// Internal device-level index node
     /// </summary>
     InternalDevice = 0,
     
     /// <summary>
-    /// Leaf device-level node. Points to measurement-level data (TimeseriesMetadata).
+    /// Internal measurement-level index node
     /// </summary>
-    LeafDevice = 1,
+    InternalMeasurement = 1,
     
     /// <summary>
-    /// Internal measurement-level index node. Points to other measurement-level nodes.
+    /// Leaf device-level node pointing to device metadata
     /// </summary>
-    InternalMeasurement = 2,
+    LeafDevice = 2,
     
     /// <summary>
-    /// Leaf measurement-level node. Points to TimeseriesMetadata.
+    /// Leaf measurement-level node pointing to time series metadata
     /// </summary>
     LeafMeasurement = 3
 }
