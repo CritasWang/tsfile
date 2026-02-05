@@ -111,12 +111,16 @@ public class TsFileV4InteropTests
             // Verify file version
             Assert.Equal(4, reader.FileVersion);
             
-            // Verify schemas are loaded
-            Assert.NotEmpty(reader.Schemas);
-            
-            // List all tables
+            // For tree model files, schemas may be empty but table index nodes should exist
+            // GetTableNames() returns tables from both schemas and index nodes
             var tableNames = reader.GetTableNames().ToList();
             Assert.NotEmpty(tableNames);
+            
+            // Verify we found the expected table
+            Assert.Contains("root.sg", tableNames);
+            
+            // Verify the index node has device entries
+            Assert.NotEmpty(reader.TableIndexNodes);
         }
         catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
         {

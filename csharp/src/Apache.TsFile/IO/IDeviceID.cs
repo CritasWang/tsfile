@@ -170,11 +170,13 @@ public class StringArrayDeviceID : IDeviceID
             if (_serializedSize != -1)
                 return _serializedSize;
             
+            // Segment count uses unsigned varint
             int cnt = VarIntSize(_segments.Length);
             foreach (var segment in _segments)
             {
                 var bytes = segment != null ? System.Text.Encoding.UTF8.GetBytes(segment) : Array.Empty<byte>();
-                cnt += VarIntSize(bytes.Length);
+                // String lengths use signed varint (zigzag encoding)
+                cnt += SignedVarIntSize(bytes.Length);
                 cnt += bytes.Length;
             }
             _serializedSize = cnt;
@@ -252,16 +254,39 @@ public class StringArrayDeviceID : IDeviceID
         return count + 1;
     }
     
+    /// <summary>
+    /// Writes a signed varint using zigzag encoding (Java compatible).
+    /// </summary>
+    private static int WriteSignedVarInt(BinaryWriter writer, int value)
+    {
+        // Zigzag encode: (value << 1) ^ (value >> 31)
+        int uValue = (value << 1) ^ (value >> 31);
+        return WriteVarInt(writer, uValue);
+    }
+    
+    /// <summary>
+    /// Writes a varint-prefixed string using signed varint for length (Java compatible).
+    /// This matches Java's ReadWriteIOUtils.writeVar().
+    /// </summary>
     private static int WriteVarIntString(BinaryWriter writer, string? value)
     {
         if (value == null)
         {
-            return WriteVarInt(writer, -1);
+            return WriteSignedVarInt(writer, -1);
         }
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        int cnt = WriteVarInt(writer, bytes.Length);
+        int cnt = WriteSignedVarInt(writer, bytes.Length);
         writer.Write(bytes);
         return cnt + bytes.Length;
+    }
+    
+    /// <summary>
+    /// Gets the size of a signed varint (zigzag encoded).
+    /// </summary>
+    private static int SignedVarIntSize(int value)
+    {
+        int uValue = (value << 1) ^ (value >> 31);
+        return VarIntSize(uValue);
     }
     
     private static int VarIntSize(int value)

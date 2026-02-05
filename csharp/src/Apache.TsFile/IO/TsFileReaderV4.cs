@@ -92,8 +92,19 @@ public class TsFileReaderV4 : IDisposable
     
     /// <summary>
     /// Gets all table names in the file.
+    /// Returns tables from both explicit table schemas and table index nodes.
     /// </summary>
-    public IEnumerable<string> GetTableNames() => _schemas.Keys;
+    public IEnumerable<string> GetTableNames()
+    {
+        // For table model files, schemas contains the table names
+        // For tree model files, table index nodes contain the path-based tables
+        var allTables = new HashSet<string>(_schemas.Keys);
+        foreach (var tableName in _tableIndexNodes.Keys)
+        {
+            allTables.Add(tableName);
+        }
+        return allTables;
+    }
     
     /// <summary>
     /// Gets the schema for a specific table.
@@ -482,7 +493,10 @@ public class TsFileReaderV4 : IDisposable
         }
     }
     
-    private int ReadVarInt()
+    /// <summary>
+    /// Reads an unsigned varint (used for counts).
+    /// </summary>
+    private int ReadUnsignedVarInt()
     {
         int result = 0;
         int shift = 0;
@@ -498,10 +512,37 @@ public class TsFileReaderV4 : IDisposable
         return result;
     }
     
+    /// <summary>
+    /// Alias for ReadUnsignedVarInt for backward compatibility.
+    /// Used for counts and sizes (non-negative integers).
+    /// </summary>
+    private int ReadVarInt() => ReadUnsignedVarInt();
+    
+    /// <summary>
+    /// Reads a signed varint using zigzag decoding (Java compatible).
+    /// This matches Java's ReadWriteForEncodingUtils.readVarInt().
+    /// </summary>
+    private int ReadSignedVarInt()
+    {
+        int value = ReadUnsignedVarInt();
+        // Zigzag decode: (value >>> 1) ^ -(value & 1)
+        int x = (int)((uint)value >> 1);
+        if ((value & 1) != 0)
+        {
+            x = ~x;
+        }
+        return x;
+    }
+    
+    /// <summary>
+    /// Reads a varint-prefixed string using signed varint for length (Java compatible).
+    /// This matches Java's ReadWriteIOUtils.readVarIntString().
+    /// </summary>
     private string ReadVarIntString()
     {
-        var length = ReadVarInt();
-        if (length <= 0) return string.Empty;
+        var length = ReadSignedVarInt();
+        if (length < 0) return string.Empty; // null marker
+        if (length == 0) return string.Empty;
         var bytes = _reader.ReadBytes(length);
         return System.Text.Encoding.UTF8.GetString(bytes);
     }

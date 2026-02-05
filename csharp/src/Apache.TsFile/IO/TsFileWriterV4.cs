@@ -501,10 +501,38 @@ public class TsFileWriterV4 : IDisposable
         _writer.Write((byte)value);
     }
     
+    /// <summary>
+    /// Writes unsigned varint (for counts and sizes).
+    /// </summary>
+    private void WriteUnsignedVarInt(int value)
+    {
+        WriteVarInt(value);
+    }
+    
+    /// <summary>
+    /// Writes a signed varint using zigzag encoding (Java compatible).
+    /// This matches Java's ReadWriteForEncodingUtils.writeVarInt().
+    /// </summary>
+    private void WriteSignedVarInt(int value)
+    {
+        // Zigzag encode: (value << 1) ^ (value >> 31)
+        int uValue = (value << 1) ^ (value >> 31);
+        WriteUnsignedVarInt(uValue);
+    }
+    
+    /// <summary>
+    /// Writes a varint-prefixed string using signed varint for length (Java compatible).
+    /// This matches Java's ReadWriteIOUtils.writeVar().
+    /// </summary>
     private void WriteVarIntString(string value)
     {
+        if (value == null)
+        {
+            WriteSignedVarInt(-1); // null marker
+            return;
+        }
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        WriteVarInt(bytes.Length);
+        WriteSignedVarInt(bytes.Length);
         _writer.Write(bytes);
     }
     
@@ -524,6 +552,9 @@ public class TsFileWriterV4 : IDisposable
         writer.Write(bytes);
     }
     
+    /// <summary>
+    /// Writes unsigned varint (for counts and sizes).
+    /// </summary>
     private static void WriteVarInt(BinaryWriter writer, int value)
     {
         while ((value & ~0x7F) != 0)
@@ -534,11 +565,39 @@ public class TsFileWriterV4 : IDisposable
         writer.Write((byte)value);
     }
     
-    private static void WriteVarIntString(BinaryWriter writer, string value)
+    /// <summary>
+    /// Writes a signed varint using zigzag encoding (Java compatible).
+    /// </summary>
+    private static void WriteSignedVarInt(BinaryWriter writer, int value)
     {
+        // Zigzag encode: (value << 1) ^ (value >> 31)
+        int uValue = (value << 1) ^ (value >> 31);
+        WriteVarInt(writer, uValue);
+    }
+    
+    /// <summary>
+    /// Writes a varint-prefixed string using signed varint for length (Java compatible).
+    /// This matches Java's ReadWriteIOUtils.writeVar().
+    /// </summary>
+    private static void WriteVarIntString(BinaryWriter writer, string? value)
+    {
+        if (value == null)
+        {
+            WriteSignedVarInt(writer, -1); // null marker
+            return;
+        }
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        WriteVarInt(writer, bytes.Length);
+        WriteSignedVarInt(writer, bytes.Length);
         writer.Write(bytes);
+    }
+    
+    /// <summary>
+    /// Gets the size of a signed varint (zigzag encoded).
+    /// </summary>
+    private static int SignedVarIntSize(int value)
+    {
+        int uValue = (value << 1) ^ (value >> 31);
+        return VarIntSize(uValue);
     }
     
     private static int VarIntSize(int value)

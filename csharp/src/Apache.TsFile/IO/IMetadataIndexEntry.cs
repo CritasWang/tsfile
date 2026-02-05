@@ -118,7 +118,8 @@ public class MeasurementMetadataIndexEntry : IMetadataIndexEntry
         get
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(Name);
-            return VarIntSize(bytes.Length) + bytes.Length + sizeof(long);
+            // String lengths use signed varint (zigzag encoding)
+            return SignedVarIntSize(bytes.Length) + bytes.Length + sizeof(long);
         }
     }
     
@@ -146,10 +147,28 @@ public class MeasurementMetadataIndexEntry : IMetadataIndexEntry
         writer.Write(bytes);
     }
     
-    private static int WriteVarIntString(BinaryWriter writer, string value)
+    /// <summary>
+    /// Writes a signed varint using zigzag encoding (Java compatible).
+    /// </summary>
+    private static int WriteSignedVarInt(BinaryWriter writer, int value)
     {
+        // Zigzag encode: (value << 1) ^ (value >> 31)
+        int uValue = (value << 1) ^ (value >> 31);
+        return WriteVarInt(writer, uValue);
+    }
+    
+    /// <summary>
+    /// Writes a varint-prefixed string using signed varint for length (Java compatible).
+    /// This matches Java's ReadWriteIOUtils.writeVar().
+    /// </summary>
+    private static int WriteVarIntString(BinaryWriter writer, string? value)
+    {
+        if (value == null)
+        {
+            return WriteSignedVarInt(writer, -1);
+        }
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        int cnt = WriteVarInt(writer, bytes.Length);
+        int cnt = WriteSignedVarInt(writer, bytes.Length);
         writer.Write(bytes);
         return cnt + bytes.Length;
     }
@@ -165,6 +184,15 @@ public class MeasurementMetadataIndexEntry : IMetadataIndexEntry
         }
         writer.Write((byte)value);
         return count + 1;
+    }
+    
+    /// <summary>
+    /// Gets the size of a signed varint (zigzag encoded).
+    /// </summary>
+    private static int SignedVarIntSize(int value)
+    {
+        int uValue = (value << 1) ^ (value >> 31);
+        return VarIntSize(uValue);
     }
     
     private static int VarIntSize(int value)
