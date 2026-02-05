@@ -112,7 +112,6 @@ jobs:
       
       - name: Build Java TSFile (install parent POM first)
         run: |
-          cd /home/runner/work/tsfile/tsfile
           mvn install -DskipTests -Dmaven.javadoc.skip=true -N
           cd java
           mvn clean install -DskipTests -Dmaven.javadoc.skip=true
