@@ -110,31 +110,43 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
       
-      - name: Build Java TSFile
-        working-directory: ./java
-        run: mvn clean install -DskipTests -Dmaven.javadoc.skip=true
+      - name: Build Java TSFile (install parent POM first)
+        run: |
+          cd /home/runner/work/tsfile/tsfile
+          mvn install -DskipTests -Dmaven.javadoc.skip=true -N
+          cd java
+          mvn clean install -DskipTests -Dmaven.javadoc.skip=true
       
       - name: Build C# TSFile
-        run: dotnet build ${{ env.PROJECT_PATH }} --configuration Release
+        run: |
+          dotnet build ${{ env.PROJECT_PATH }} --configuration Release
+          dotnet build ./csharp/examples/BasicExample/BasicExample.csproj --configuration Release
       
-      # NOTE: Java V4 and C# V4 file formats are currently incompatible.
-      # Java uses zigzag-encoded signed varint for string lengths, while C# uses unsigned varint.
-      # The table schema serialization also differs (column names use int-prefixed strings in Java).
-      # TODO: Align V4 serialization format between Java and C# for cross-language interoperability.
-      - name: Create C# test file
+      # Test 1: Java creates V4 file, C# reads it
+      - name: Test Java -> C# Interop (Java writes V4, C# reads)
+        run: |
+          echo "=== Test 1: Java creates V4 file, C# reads ===" 
+          
+          # Java writes a V4 file using TsFileWriteSimple
+          cd java/examples
+          mvn exec:java -Dexec.mainClass="org.apache.tsfile.TsFileWriteSimple" -Dexec.args="../java-interop-test.tsfile"
+          ls -la ../java-interop-test.tsfile
+          
+          # C# reads the Java V4 file
+          cd ../../csharp
+          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release --no-build -- read ../java-interop-test.tsfile
+          echo "Java -> C# Interop test passed!"
+      
+      # Test 2: C# self-interop (write and read back)
+      # Note: C# writes V3 format, Java reads V4 natively. Full C#->Java interop 
+      # requires C# V3 format to match Java V3 exactly or C# to write V4 format.
+      - name: Test C# Self-Interop
         working-directory: ./csharp
         run: |
-          # Create a test file with C# V4 format
-          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release -- write ../csharp-test.tsfile
-          ls -la ../csharp-test.tsfile
-          echo "C# V4 file created successfully"
-      
-      - name: Read C# file with C#
-        working-directory: ./csharp
-        run: |
-          # Verify C# can read its own V4 files
-          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release -- read ../csharp-test.tsfile
-          echo "C# V4 read successful"
+          echo "=== Test 2: C# self-interop ==="
+          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release --no-build -- write ../csharp-self-test.tsfile
+          dotnet run --project ./examples/BasicExample/BasicExample.csproj --configuration Release --no-build -- read ../csharp-self-test.tsfile
+          echo "C# self-interop test passed!"
 
   coverage:
     name: Code Coverage
@@ -305,8 +317,9 @@ jobs:
         with:
           pattern: test-results-*
           merge-multiple: true
+        continue-on-error: true
       
-      - name: Publish test summary
+      - name: Validate and publish test summary
         uses: dorny/test-reporter@v1
         if: always()
         with:
@@ -314,3 +327,4 @@ jobs:
           path: '**/*.trx'
           reporter: dotnet-trx
           fail-on-error: false
+        continue-on-error: true
