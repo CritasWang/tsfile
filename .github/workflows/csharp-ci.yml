@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 env:
-  DOTNET_VERSION: '10.0.x'
+  DOTNET_VERSION: '9.0.x'
   SOLUTION_PATH: './csharp/Apache.TsFile.slnx'
   PROJECT_PATH: './csharp/src/Apache.TsFile/Apache.TsFile.csproj'
   TEST_PATH: './csharp/tests/Apache.TsFile.Tests/Apache.TsFile.Tests.csproj'
