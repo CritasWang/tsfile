@@ -94,7 +94,7 @@ public class TsFileWriteSimple {
       // INT64
       tablet.addValue(schemas.get(1).getMeasurementName(), row, r * 10L);
       // FLOAT
-      tablet.addValue(schemas.get(2).getMeasurementName(), row, (float) r * 0.1f);
+      tablet.addValue(schemas.get(2).getMeasurementName(), row, r * 0.1f);
       // DOUBLE
       tablet.addValue(schemas.get(3).getMeasurementName(), row, r * 0.01);
       // BOOLEAN
