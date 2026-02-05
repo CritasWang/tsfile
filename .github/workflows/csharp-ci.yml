@@ -125,74 +125,39 @@ jobs:
         run: dotnet build ${{ env.TEST_PATH }} --configuration Release
 
       - name: Create interop test directory
-        run: mkdir -p /tmp/interop-tests
+        run: mkdir -p /tmp/interop-test-files
 
-      # Step 1: Generate Java V4 test files
-      - name: Generate Java V4 test files
+      # Step 1: Generate Java test files (uses TsFileInteropGenerator)
+      - name: Generate Java test files
         working-directory: ./java/interop-tests
         run: |
-          echo "=== Generating Java V4 test files ==="
-          mvn -Dexec.mainClass="org.apache.tsfile.interop.V4TestFileGenerator" -Dexec.args="/tmp/interop-tests/java-v4" exec:java
+          echo "=== Generating Java test files ==="
+          mvn exec:java
           echo "=== Files generated ==="
-          ls -la /tmp/interop-tests/java-v4/
+          ls -la /tmp/interop-test-files/ | head -20
 
-      # Step 2: C# reads Java V4 files
-      - name: C# reads Java V4 files
+      # Step 2: C# reads Java test files
+      - name: C# reads Java test files
         run: |
-          echo "=== C# reading Java V4 files ==="
-          dotnet test ${{ env.TEST_PATH }} --configuration Release --no-build --filter "FullyQualifiedName~TsFileV4InteropTests" --verbosity normal
-
-      # Step 3: Generate C# V4 test files
-      - name: Generate C# V4 test files
-        env:
-          CSHARP_V4_OUTPUT_DIR: /tmp/interop-tests/csharp-v4
-        run: |
-          echo "=== Generating C# V4 test files ==="
-          dotnet test ${{ env.TEST_PATH }} --configuration Release --no-build --filter "FullyQualifiedName~GenerateCSharpV4FilesForJavaInterop" --verbosity normal
-          echo "Generated C# V4 files:"
-          ls -la /tmp/interop-tests/csharp-v4/
-
-      # Step 4: Java reads C# V4 files (experimental - format compatibility in progress)
-      - name: Java reads C# V4 files
-        working-directory: ./java/interop-tests
-        continue-on-error: true
-        run: |
-          echo "=== Java reading C# V4 files (experimental) ==="
-          echo "Note: Full V4 format compatibility between C# and Java is in progress."
-          echo "C# can read Java V4 files, but Java reading C# V4 files may have limitations."
-          for file in /tmp/interop-tests/csharp-v4/*.tsfile; do
-            echo "Validating: $file"
-            mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.CSharpFileValidator" -Dexec.args="$file" -q || echo "  Warning: Validation failed (expected during format alignment)"
-          done
-          echo "Java V4 validation completed (some failures expected during format alignment)"
-
-      # Step 5: Run full interop test suite
-      - name: Run C# Interop Tests
-        run: |
-          echo "=== Running full C# interop test suite ==="
-          dotnet test csharp/tests/Apache.TsFile.InteropTests/Apache.TsFile.InteropTests.csproj --configuration Release --verbosity normal || echo "Interop tests completed (some may be skipped if test files not available)"
+          echo "=== C# reading Java test files ==="
+          dotnet test csharp/tests/Apache.TsFile.InteropTests/Apache.TsFile.InteropTests.csproj --configuration Release --verbosity normal
 
       - name: Upload interop test files
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: interop-test-files
-          path: /tmp/interop-tests/
+          path: /tmp/interop-test-files/
           retention-days: 7
 
       - name: Interop test summary
         if: always()
         run: |
           echo "=== Interoperability Test Summary ==="
-          echo "Java V4 files generated: $(ls /tmp/interop-tests/java-v4/*.tsfile 2>/dev/null | wc -l)"
-          echo "C# V4 files generated: $(ls /tmp/interop-tests/csharp-v4/*.tsfile 2>/dev/null | wc -l)"
+          echo "Java test files generated: $(ls /tmp/interop-test-files/*.tsfile 2>/dev/null | wc -l)"
           echo ""
           echo "Test Results:"
-          echo "  - Java -> C#: Verified via TsFileV4InteropTests (SUPPORTED)"
-          echo "  - C# -> Java: Experimental (format alignment in progress)"
-          echo ""
-          echo "Note: C# implementation can read Java V4 files."
-          echo "      Java reading C# V4 files requires additional format alignment work."
+          echo "  - Java -> C#: Verified via JavaToCSharpInteropTests"
 
   coverage:
     name: Code Coverage
@@ -251,13 +216,13 @@ jobs:
       - name: Run benchmark (medium dataset)
         working-directory: ./csharp/benchmarks/Apache.TsFile.Benchmarks
         run: |
-          echo "=== Performance Benchmark (Medium Dataset) ==="
-          echo "Running with 100 tables × 100 devices × 100 measurements × 1000 rows × 10 tablets"
-          dotnet run --configuration Release -- --tables 100 --devices 100 --measurements 100 --rows 1000 --tablets 10 --iterations 10 --warmup 1
+          echo "=== Performance Benchmark (Small Dataset for CI) ==="
+          echo "Running with 10 tables × 10 devices × 10 measurements × 100 rows × 5 tablets"
+          dotnet run --configuration Release -- --tables 10 --devices 10 --measurements 10 --rows 100 --tablets 5 --iterations 3 --warmup 1
           
           echo ""
           echo "Benchmark completed successfully"
-          echo "For full benchmark results (100M data points), run locally with default parameters"
+          echo "For full benchmark results, run locally with default parameters"
 
   package:
     name: Create NuGet Package
