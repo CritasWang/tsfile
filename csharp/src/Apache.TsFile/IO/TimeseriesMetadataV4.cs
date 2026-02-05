@@ -127,14 +127,14 @@ public class StatisticsV4
     {
         var stats = new StatisticsV4();
         
-        // Count - unsigned varint (not long!)
-        stats.Count = readVarInt();
+        // Count
+        stats.Count = readLong();
         
-        // StartTime and EndTime - big endian longs
+        // StartTime and EndTime
         stats.StartTime = readLong();
         stats.EndTime = readLong();
         
-        // Type-specific values depend on data type
+        // Type-specific values
         switch (dataType)
         {
             case TsDataType.Boolean:
@@ -199,11 +199,6 @@ public class StatisticsV4
                 stats.FirstValue = ReadInt32BigEndian(reader);
                 stats.LastValue = ReadInt32BigEndian(reader);
                 stats.SumValue = 0.0;
-                break;
-            
-            case TsDataType.Vector:
-                // Vector (time column) has no type-specific statistics
-                // Only count, startTime, endTime which are already read
                 break;
                 
             default:

@@ -319,10 +319,7 @@ public class TsFileReader : IDisposable
         }
     }
     
-    /// <summary>
-    /// Reads an unsigned varint (used for counts).
-    /// </summary>
-    private int ReadUnsignedVarInt()
+    private int ReadVarInt()
     {
         // Read variable-length integer (similar to ReadWriteForEncodingUtils.readUnsignedVarInt)
         int result = 0;
@@ -339,26 +336,10 @@ public class TsFileReader : IDisposable
         return result;
     }
     
-    /// <summary>
-    /// Reads a signed varint using zigzag decoding.
-    /// </summary>
-    private int ReadSignedVarInt()
-    {
-        int value = ReadUnsignedVarInt();
-        // Zigzag decode: (value >>> 1) ^ -(value & 1)
-        return (int)((uint)value >> 1) ^ -(value & 1);
-    }
-    
-    // Alias for backward compatibility
-    private int ReadVarInt() => ReadUnsignedVarInt();
-    
     private string ReadVarIntString()
     {
         // Read variable-length string (similar to ReadWriteIOUtils.readVarIntString)
-        // Note: Java uses signed varint for string length
-        var length = ReadSignedVarInt();
-        if (length < 0) return string.Empty;
-        if (length == 0) return string.Empty;
+        var length = ReadVarInt();
         var bytes = _reader.ReadBytes(length);
         return System.Text.Encoding.UTF8.GetString(bytes);
     }
