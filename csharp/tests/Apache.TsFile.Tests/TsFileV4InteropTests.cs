@@ -406,9 +406,20 @@ public class TsFileV4InteropTests
     [Fact]
     public void GenerateCSharpV4FilesForJavaInterop()
     {
-        // Use environment variable or default path
-        var outputDir = Environment.GetEnvironmentVariable("CSHARP_V4_OUTPUT_DIR")
-            ?? Path.Combine(Path.GetTempPath(), "csharp-v4-interop");
+        // Determine output directory
+        // Priority: 1. Environment variable, 2. CI detection, 3. Local temp
+        var outputDir = Environment.GetEnvironmentVariable("CSHARP_V4_OUTPUT_DIR");
+
+        if (string.IsNullOrEmpty(outputDir))
+        {
+            // Check if running in CI (GitHub Actions sets CI=true)
+            var isCI = Environment.GetEnvironmentVariable("CI") == "true"
+                    || Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
+
+            outputDir = isCI
+                ? "/tmp/interop-tests/csharp-v4"  // CI path
+                : Path.Combine(Path.GetTempPath(), "csharp-v4-interop");  // Local path
+        }
 
         Directory.CreateDirectory(outputDir);
 

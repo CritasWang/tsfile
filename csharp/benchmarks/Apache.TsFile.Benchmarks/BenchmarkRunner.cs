@@ -104,7 +104,7 @@ public class BenchmarkRunner
                 }
             }
 
-            result.RegistrationTimeNs = sw.ElapsedTicks * 1_000_000_000 / Stopwatch.Frequency;
+            result.RegistrationTimeNs = (long)(sw.Elapsed.TotalMilliseconds * 1_000_000);
 
             // Phase 2: Write data
             sw.Restart();
@@ -148,12 +148,12 @@ public class BenchmarkRunner
                 }
             }
 
-            result.WriteTimeNs = sw.ElapsedTicks * 1_000_000_000 / Stopwatch.Frequency;
+            result.WriteTimeNs = (long)(sw.Elapsed.TotalMilliseconds * 1_000_000);
 
             // Phase 3: Close file
             sw.Restart();
             writer.Close();
-            result.CloseTimeNs = sw.ElapsedTicks * 1_000_000_000 / Stopwatch.Frequency;
+            result.CloseTimeNs = (long)(sw.Elapsed.TotalMilliseconds * 1_000_000);
             writer = null;
 
             // Measure file size
@@ -178,7 +178,7 @@ public class BenchmarkRunner
                     Console.WriteLine($"  WARNING: Query returned no data for device {queryDeviceId}");
                 }
             }
-            result.QueryTimeNs = sw.ElapsedTicks * 1_000_000_000 / Stopwatch.Frequency;
+            result.QueryTimeNs = (long)(sw.Elapsed.TotalMilliseconds * 1_000_000);
 
             // Measure memory usage
             long memoryAfter = GC.GetTotalMemory(false);

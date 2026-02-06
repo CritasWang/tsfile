@@ -63,17 +63,17 @@ static void PrintHelp()
 Usage: Apache.TsFile.Benchmarks [options]
 
 Options:
-  --tables N           Number of tables (default: 100)
-  --devices N          Devices per table (default: 100)
-  --measurements N     Measurements per device (default: 100)
+  --tables N           Number of tables (default: 10)
+  --devices N          Devices per table (default: 10)
+  --measurements N     Measurements per device (default: 10)
   --rows N             Rows per Tablet (default: 100)
-  --tablets N          Number of Tablets (default: 100)
-  --iterations N       Total iterations (default: 10)
-  --warmup N           Warmup iterations (default: 5)
+  --tablets N          Number of Tablets (default: 10)
+  --iterations N       Total iterations (default: 3)
+  --warmup N           Warmup iterations (default: 1)
   --output PATH        Output file path (default: benchmark_output.tsfile)
   --help               Show this help message
 
 Example:
-  Apache.TsFile.Benchmarks --tables 50 --devices 50 --iterations 5
+  Apache.TsFile.Benchmarks --tables 5 --devices 5 --iterations 3
 ");
 }
