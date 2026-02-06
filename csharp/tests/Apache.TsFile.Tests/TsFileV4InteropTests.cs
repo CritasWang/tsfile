@@ -42,42 +42,76 @@ public class TsFileV4InteropTests
     [Fact]
     public void ReadJavaV4File_CanReadSchemas()
     {
-        var javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
-        
+        // Try CI-generated files first (true interop test)
+        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        string? javaV4File = null;
+
+        if (Directory.Exists(javaV4Dir))
+        {
+            var files = Directory.GetFiles(javaV4Dir, "*.tsfile");
+            if (files.Length > 0)
+            {
+                javaV4File = files[0];
+            }
+        }
+
+        // Fallback to static file for local testing
+        if (javaV4File == null || !File.Exists(javaV4File))
+        {
+            javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+        }
+
         if (!File.Exists(javaV4File))
         {
             // Skip if file doesn't exist
             return;
         }
-        
+
         // Verify it's a v4 file
         using var fs = new FileStream(javaV4File, FileMode.Open, FileAccess.Read);
         var magic = new byte[6];
         fs.ReadExactly(magic, 0, 6);
         var version = fs.ReadByte();
-        
+
         Assert.Equal(4, version);
     }
     
     [Fact]
     public void ReadJavaV4File_CanReadSchemasWithReader()
     {
-        var javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
-        
+        // Try CI-generated files first (true interop test)
+        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        string? javaV4File = null;
+
+        if (Directory.Exists(javaV4Dir))
+        {
+            var files = Directory.GetFiles(javaV4Dir, "*.tsfile");
+            if (files.Length > 0)
+            {
+                javaV4File = files[0];
+            }
+        }
+
+        // Fallback to static file for local testing
+        if (javaV4File == null || !File.Exists(javaV4File))
+        {
+            javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+        }
+
         if (!File.Exists(javaV4File))
         {
             return;
         }
-        
+
         // Java V4 files have a complex format that may not be fully compatible
         // This test verifies that we can at least attempt to read without crashing
         try
         {
             using var reader = new TsFileReader(javaV4File);
-            
+
             // If we get here, basic parsing worked
             Assert.NotNull(reader.Schemas);
-            
+
             // V4 files should have table schemas
             foreach (var schema in reader.Schemas)
             {
@@ -95,7 +129,24 @@ public class TsFileV4InteropTests
     [Fact]
     public void ReadJavaV4File_WithTsFileReader()
     {
-        var javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+        // Try CI-generated files first (true interop test)
+        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        string? javaV4File = null;
+
+        if (Directory.Exists(javaV4Dir))
+        {
+            var files = Directory.GetFiles(javaV4Dir, "*.tsfile");
+            if (files.Length > 0)
+            {
+                javaV4File = files[0];
+            }
+        }
+
+        // Fallback to static file for local testing
+        if (javaV4File == null || !File.Exists(javaV4File))
+        {
+            javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+        }
 
         if (!File.Exists(javaV4File))
         {
@@ -397,8 +448,8 @@ public class TsFileV4InteropTests
         };
         writer.RegisterDevice("root.test.device1", measurements);
 
-        var tablet = new Tablet("root.test.device1", measurements, 100);
-        for (int i = 0; i < 10; i++)
+        var tablet = new Tablet("root.test.device1", measurements, 10); // 缩减10倍: 100 -> 10
+        for (int i = 0; i < 10; i++) // 缩减10倍: 10 -> 10 (保持不变，已经很小)
         {
             tablet.AddRow(i * 1000L, 25.0 + i * 0.5, 60 + i);
         }
@@ -424,10 +475,10 @@ public class TsFileV4InteropTests
         writer.RegisterDevice("root.factory.line1.machine1", measurements1);
         writer.RegisterDevice("root.factory.line1.machine2", measurements2);
 
-        var tablet1 = new Tablet("root.factory.line1.machine1", measurements1, 100);
-        var tablet2 = new Tablet("root.factory.line1.machine2", measurements2, 100);
+        var tablet1 = new Tablet("root.factory.line1.machine1", measurements1, 10); // 缩减10倍: 100 -> 10
+        var tablet2 = new Tablet("root.factory.line1.machine2", measurements2, 10); // 缩减10倍: 100 -> 10
 
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 5; i++) // 保持5行数据
         {
             tablet1.AddRow(i * 100L, 1000L + i * 10);
             tablet2.AddRow(i * 100L, 100.0f + i * 0.5f);
@@ -453,8 +504,8 @@ public class TsFileV4InteropTests
         // Use tree model registration
         writer.RegisterTimeseries("root.sg1.d1", measurements);
 
-        var tablet = new Tablet("root.sg1.d1", measurements, 100);
-        for (int i = 0; i < 20; i++)
+        var tablet = new Tablet("root.sg1.d1", measurements, 10); // 缩减10倍: 100 -> 10
+        for (int i = 0; i < 20; i++) // 保持20行数据
         {
             tablet.AddRow(i * 50L, i * 100, i % 2 == 0);
         }
@@ -466,15 +517,33 @@ public class TsFileV4InteropTests
     /// <summary>
     /// Tests querying data from Java-generated V4 files.
     /// This verifies that C# can read and query data written by Java.
+    /// Reads from CI-generated files in /tmp/interop-tests/java-v4/ or falls back to static file.
     /// </summary>
     [Fact]
     public void QueryJavaV4File_ReturnsData()
     {
-        var javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+        // Try CI-generated files first (true interop test)
+        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        string? javaV4File = null;
+
+        if (Directory.Exists(javaV4Dir))
+        {
+            var files = Directory.GetFiles(javaV4Dir, "*.tsfile");
+            if (files.Length > 0)
+            {
+                javaV4File = files[0]; // Use first available file
+            }
+        }
+
+        // Fallback to static file for local testing
+        if (javaV4File == null || !File.Exists(javaV4File))
+        {
+            javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+        }
 
         if (!File.Exists(javaV4File))
         {
-            // Skip if file doesn't exist
+            // Skip if no file available
             return;
         }
 

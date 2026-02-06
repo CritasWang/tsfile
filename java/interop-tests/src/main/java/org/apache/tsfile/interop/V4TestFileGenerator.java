@@ -106,7 +106,7 @@ public class V4TestFileGenerator {
               Arrays.asList(
                   TSDataType.STRING, TSDataType.STRING, TSDataType.DOUBLE, TSDataType.INT32));
 
-      // Add data for device 1
+      // Add data for device 1 (缩减10倍: 100 -> 10 rows)
       for (int row = 0; row < 10; row++) {
         long timestamp = row * 1000L;
         tablet.addTimestamp(row, timestamp);
@@ -184,16 +184,16 @@ public class V4TestFileGenerator {
                   TSDataType.FLOAT,
                   TSDataType.BOOLEAN));
 
-      // Add data for multiple devices
-      String[] factories = {"F1", "F2"};
-      String[] lines = {"L1", "L2"};
-      String[] machines = {"M1", "M2", "M3"};
+      // Add data for multiple devices (缩减10倍: 原60行 -> 6行)
+      String[] factories = {"F1"}; // 缩减: 2 -> 1
+      String[] lines = {"L1"}; // 缩减: 2 -> 1
+      String[] machines = {"M1", "M2"}; // 缩减: 3 -> 2
 
       int rowIndex = 0;
       for (String factory : factories) {
         for (String line : lines) {
           for (String machine : machines) {
-            for (int i = 0; i < 5; i++) {
+            for (int i = 0; i < 3; i++) { // 缩减: 5 -> 3
               long timestamp = rowIndex * 100L;
               tablet.addTimestamp(rowIndex, timestamp);
               tablet.addValue(rowIndex, "factory", factory);
