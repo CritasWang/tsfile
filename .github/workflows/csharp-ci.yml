@@ -132,8 +132,9 @@ jobs:
         working-directory: ./java/interop-tests
         run: |
           echo "=== Generating Java V4 test files ==="
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.V4TestFileGenerator" -Dexec.args="/tmp/interop-tests/java-v4" -q
-          ls -la /tmp/interop-tests/java-v4/
+          mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.V4TestFileGenerator" -Dexec.args="/tmp/interop-tests/java-v4" -Dexec.classpathScope=compile -q
+          echo "Generated Java V4 files:"
+          ls -la /tmp/interop-tests/java-v4/ || echo "Warning: Directory not found"
 
       # Step 2: C# reads Java V4 files
       - name: C# reads Java V4 files
