@@ -252,12 +252,12 @@ jobs:
         working-directory: ./csharp/benchmarks/Apache.TsFile.Benchmarks
         run: |
           echo "=== Performance Benchmark (Medium Dataset) ==="
-          echo "Running with 100 tables × 100 devices × 100 measurements × 1000 rows × 10 tablets"
-          dotnet run --configuration Release -- --tables 100 --devices 100 --measurements 100 --rows 1000 --tablets 10 --iterations 10 --warmup 1
+          echo "Running with 10 tables × 100 devices × 100 measurements × 1000 rows × 10 tablets"
+          dotnet run --configuration Release -- --tables 10 --devices 100 --measurements 100 --rows 1000 --tablets 10 --iterations 3 --warmup 1
           
           echo ""
           echo "Benchmark completed successfully"
-          echo "For full benchmark results (100M data points), run locally with default parameters"
+          echo "For full benchmark results (10M data points), run locally with default parameters"
 
   package:
     name: Create NuGet Package
