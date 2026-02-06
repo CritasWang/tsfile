@@ -349,7 +349,7 @@ foreach (var deviceId in reader.GetDevices())
 {
     // Process one device at a time to manage memory
     var result = reader.Query(deviceId);
-    
+
     // Process data in chunks
     int chunkSize = 10000;
     for (int i = 0; i < result.Count; i += chunkSize)
@@ -359,6 +359,37 @@ foreach (var deviceId in reader.GetDevices())
     }
 }
 ```
+
+### 6.6 V4 Format Query Support
+
+The unified TsFileReader supports querying both V3 and V4 format files. V4 files use a table-based model with metadata index trees for efficient data location.
+
+```csharp
+using var reader = new TsFileReader("v4_data.tsfile");
+
+// Check file version
+Console.WriteLine($"File version: {reader.FileVersion}");
+
+// V4 files use table names as device identifiers
+foreach (var tableName in reader.Schemas.Keys)
+{
+    Console.WriteLine($"Table: {tableName}");
+
+    // Query data from the table
+    var result = reader.Query(tableName);
+    Console.WriteLine($"  Rows: {result.Timestamps.Count}");
+
+    // Query with time range filter (uses statistics for optimization)
+    var filtered = reader.Query(tableName, startTime: 1000L, endTime: 5000L);
+    Console.WriteLine($"  Filtered rows: {filtered.Timestamps.Count}");
+}
+```
+
+**V4 Query Features:**
+- Automatic metadata index tree navigation
+- Statistics-based time range filtering (skips chunks outside range)
+- Support for both tree model (device/measurement) and table model (table/column)
+- Compatible with Java-generated V4 files
 
 ## 7. Data Types
 

@@ -169,7 +169,7 @@ jobs:
       - name: Run C# Interop Tests
         run: |
           echo "=== Running full C# interop test suite ==="
-          dotnet test csharp/tests/Apache.TsFile.InteropTests/Apache.TsFile.InteropTests.csproj --configuration Release --verbosity normal || echo "Interop tests completed (some may be skipped if test files not available)"
+          dotnet test csharp/tests/Apache.TsFile.Tests/Apache.TsFile.Tests.csproj --configuration Release --verbosity normal || echo "Interop tests completed (some may be skipped if test files not available)"
 
       - name: Upload interop test files
         uses: actions/upload-artifact@v4

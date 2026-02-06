@@ -34,6 +34,7 @@ public class TsFileReader : IDisposable
     private readonly FileStream _fileStream;
     private readonly BinaryReader _reader;
     private Dictionary<string, TableSchema>? _schemas;
+    private Dictionary<string, MetadataIndexNode>? _tableIndexNodes;
     private long _metadataOffset;
     private byte _fileVersion;
     private bool _disposed;
@@ -70,44 +71,30 @@ public class TsFileReader : IDisposable
     /// <summary>
     /// Queries data from the file.
     /// </summary>
-    /// <remarks>
-    /// For v4 files: This method currently has limited support. V4 files use a table-based
-    /// model that requires metadata index tree traversal to locate chunks. Full v4 query
-    /// support requires complete implementation of MetadataIndexNode navigation.
-    /// Current limitation: May not return data for v4 files.
-    /// </remarks>
-    public QueryResult Query(string deviceName, string[]? measurements = null, 
+    public QueryResult Query(string deviceName, string[]? measurements = null,
         long? startTime = null, long? endTime = null)
     {
         if (!_schemas!.TryGetValue(deviceName, out var schema))
             throw new ArgumentException($"Device {deviceName} not found in file");
-        
+
         var result = new QueryResult(deviceName, schema);
-        
-        // V4 warning: This implementation is designed for v3 format
-        // V4 files may require metadata index navigation to find chunks
+
         if (_fileVersion == TsFileConstants.JavaVersion4)
         {
-            // For v4, we would need to:
-            // 1. Navigate the MetadataIndexNode tree using table name
-            // 2. Find device entries within the table
-            // 3. Locate chunk positions from TimeseriesMetadata
-            // 4. Read chunks at those positions
-            // Currently returning empty result for v4 files
-            return result;
+            return QueryV4(deviceName, schema, measurements, startTime, endTime);
         }
-        
+
         // Read chunks for this device (v3 format)
         _fileStream.Position = TsFileConstants.MagicString.Length + 1; // Skip header
-        
+
         while (_fileStream.Position < _metadataOffset)
         {
             var marker = _reader.ReadByte();
             if (marker != TsFileConstants.ChunkHeaderMarker)
                 break;
-            
+
             var chunkDeviceName = _reader.ReadString();
-            
+
             if (chunkDeviceName == deviceName)
             {
                 ReadChunk(result, schema, measurements, startTime, endTime);
@@ -118,7 +105,7 @@ public class TsFileReader : IDisposable
                 SkipChunk(schema);
             }
         }
-        
+
         return result;
     }
     
@@ -216,13 +203,15 @@ public class TsFileReader : IDisposable
 
         try
         {
-            // 1. Read and skip table index node map
+            // 1. Read table index node map (needed for V4 queries)
             var tableIndexNodeNum = ReadVarInt();
+            _tableIndexNodes = new Dictionary<string, MetadataIndexNode>();
 
             for (int i = 0; i < tableIndexNodeNum; i++)
             {
-                ReadVarIntString(); // table name
-                SkipMetadataIndexNode(); // skip the MetadataIndexNode
+                var tableName = ReadVarIntString();
+                var indexNode = ReadMetadataIndexNodeV4(isDeviceLevel: true);
+                _tableIndexNodes[tableName] = indexNode;
             }
 
             // 2. Read table schemas
@@ -269,40 +258,9 @@ public class TsFileReader : IDisposable
         }
     }
 
-    private void SkipMetadataIndexNode()
+    private MetadataIndexNode ReadMetadataIndexNodeV4(bool isDeviceLevel)
     {
-        // MetadataIndexNode structure:
-        // - VarInt: children count
-        // - For each child (DeviceMetadataIndexEntry):
-        //   - StringArrayDeviceID: VarInt(segmentCount) + [VarIntString(segment)]...
-        //   - Int64 (big-endian): offset
-        // - Int64 (big-endian): endOffset
-        // - byte: nodeType
-
-        var childrenCount = ReadVarInt();
-
-        for (int j = 0; j < childrenCount; j++)
-        {
-            // Read StringArrayDeviceID
-            SkipStringArrayDeviceID();
-            // Skip offset (8 bytes)
-            ReadInt64BigEndian(_reader);
-        }
-
-        ReadInt64BigEndian(_reader); // endOffset
-        _reader.ReadByte(); // nodeType
-    }
-
-    private void SkipStringArrayDeviceID()
-    {
-        // StringArrayDeviceID format:
-        // - VarInt: segment count
-        // - For each segment: VarIntString
-        var segmentCount = ReadVarInt();
-        for (int i = 0; i < segmentCount; i++)
-        {
-            ReadVarIntString();
-        }
+        return MetadataIndexNode.DeserializeV4(_reader, isDeviceLevel, ReadVarInt, ReadVarIntString, () => ReadInt64BigEndian(_reader));
     }
 
     private TableSchema ReadTableSchemaV4(string tableName)
@@ -520,6 +478,159 @@ public class TsFileReader : IDisposable
              | ((long)buffer[offset + 6] << 8)
              | buffer[offset + 7];
     }
+
+    #region V4 Query Implementation
+
+    private QueryResult QueryV4(string deviceName, TableSchema schema, string[]? measurements,
+        long? startTime, long? endTime)
+    {
+        var result = new QueryResult(deviceName, schema);
+
+        // Get table name from device name (for V4, deviceName is the table name)
+        var tableName = deviceName;
+        if (!_tableIndexNodes!.TryGetValue(tableName, out var rootNode))
+        {
+            // Device not found in index
+            return result;
+        }
+
+        // Navigate to find timeseries metadata for this device
+        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, tableName, measurements);
+
+        // Read chunks for each timeseries
+        foreach (var tsMetadata in timeseriesMetadataList)
+        {
+            ReadTimeseriesDataV4(result, tsMetadata, startTime, endTime);
+        }
+
+        return result;
+    }
+
+    private List<TimeseriesMetadataV4> NavigateToTimeseriesMetadata(MetadataIndexNode rootNode,
+        string tableName, string[]? measurements)
+    {
+        var result = new List<TimeseriesMetadataV4>();
+        var measurementFilter = measurements?.ToHashSet();
+
+        // For leaf device nodes, entries point to measurement index nodes
+        if (rootNode.NodeType == MetadataIndexNodeType.LeafDevice)
+        {
+            foreach (var entry in rootNode.Entries)
+            {
+                if (entry is DeviceMetadataIndexEntry deviceEntry)
+                {
+                    // Read measurement index node at this offset
+                    _fileStream.Position = deviceEntry.Offset;
+                    var measurementNode = ReadMetadataIndexNodeV4(isDeviceLevel: false);
+                    ReadTimeseriesMetadataFromNode(measurementNode, result, measurementFilter);
+                }
+            }
+        }
+        else if (rootNode.NodeType == MetadataIndexNodeType.LeafMeasurement)
+        {
+            // Direct measurement entries
+            ReadTimeseriesMetadataFromNode(rootNode, result, measurementFilter);
+        }
+
+        return result;
+    }
+
+    private void ReadTimeseriesMetadataFromNode(MetadataIndexNode node, List<TimeseriesMetadataV4> result,
+        HashSet<string>? measurementFilter)
+    {
+        foreach (var entry in node.Entries)
+        {
+            if (entry is MeasurementMetadataIndexEntry measurementEntry)
+            {
+                // Check measurement filter
+                if (measurementFilter != null && !measurementFilter.Contains(measurementEntry.Name))
+                    continue;
+
+                // Read timeseries metadata at this offset
+                _fileStream.Position = measurementEntry.Offset;
+                var tsMetadata = TimeseriesMetadataV4.Deserialize(_reader, ReadVarInt, ReadVarIntString,
+                    () => ReadInt64BigEndian(_reader), needChunkMetadata: true);
+                result.Add(tsMetadata);
+            }
+        }
+    }
+
+    private void ReadTimeseriesDataV4(QueryResult result, TimeseriesMetadataV4 tsMetadata,
+        long? startTime, long? endTime)
+    {
+        foreach (var chunkMeta in tsMetadata.ChunkMetadataList)
+        {
+            // Use statistics for time range filtering if available
+            var stats = chunkMeta.Statistics ?? tsMetadata.Statistics;
+            if (stats != null)
+            {
+                if (startTime.HasValue && stats.EndTime < startTime.Value)
+                    continue; // Skip chunk - all data before start time
+                if (endTime.HasValue && stats.StartTime > endTime.Value)
+                    continue; // Skip chunk - all data after end time
+            }
+
+            // Read chunk data
+            ReadChunkV4(result, chunkMeta, tsMetadata.DataType, startTime, endTime);
+        }
+    }
+
+    private void ReadChunkV4(QueryResult result, ChunkMetadataV4 chunkMeta, TsDataType dataType,
+        long? startTime, long? endTime)
+    {
+        _fileStream.Position = chunkMeta.OffsetOfChunkHeader;
+
+        // Read chunk header
+        var marker = _reader.ReadByte();
+        if (marker != 0x01 && marker != 0x05) // CHUNK_HEADER or ONLY_ONE_PAGE_CHUNK_HEADER
+            return;
+
+        var measurementId = ReadVarIntString();
+        var dataSize = ReadVarInt();
+        var chunkDataType = (TsDataType)_reader.ReadByte();
+        var compression = (CompressionType)_reader.ReadByte();
+        var encoding = (TsEncoding)_reader.ReadByte();
+
+        // Read chunk data (pages)
+        var chunkDataStart = _fileStream.Position;
+        var chunkDataEnd = chunkDataStart + dataSize;
+
+        while (_fileStream.Position < chunkDataEnd)
+        {
+            ReadPageV4(result, measurementId, chunkDataType, encoding, compression, startTime, endTime);
+        }
+    }
+
+    private void ReadPageV4(QueryResult result, string measurementId, TsDataType dataType,
+        TsEncoding encoding, CompressionType compression, long? startTime, long? endTime)
+    {
+        // Read page header
+        var uncompressedSize = ReadVarInt();
+        var compressedSize = ReadVarInt();
+
+        // Read compressed page data
+        var compressedData = _reader.ReadBytes(compressedSize);
+
+        // Decompress
+        var uncompressor = CompressorFactory.GetUncompressor(compression);
+        var pageData = uncompressor.Uncompress(compressedData);
+
+        // Decode timestamps and values
+        // Page format: [timestamps][values]
+        // For time column: timestamps only
+        // For value column: values only
+
+        var decoder = DecoderFactory.CreateDecoder(encoding, dataType);
+        var values = DecodeColumn(decoder, dataType, pageData);
+
+        // Add to result
+        if (values.Count > 0)
+        {
+            result.AddMeasurementData(measurementId, values);
+        }
+    }
+
+    #endregion
     
     public void Dispose()
     {
