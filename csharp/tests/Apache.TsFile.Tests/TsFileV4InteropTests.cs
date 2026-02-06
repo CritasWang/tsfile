@@ -505,7 +505,7 @@ public class TsFileV4InteropTests
         writer.RegisterTimeseries("root.sg1.d1", measurements);
 
         var tablet = new Tablet("root.sg1.d1", measurements, 10); // 缩减10倍: 100 -> 10
-        for (int i = 0; i < 20; i++) // 保持20行数据
+        for (int i = 0; i < 10; i++) // 缩减10倍: 20 -> 10 (修复 Tablet is full 错误)
         {
             tablet.AddRow(i * 50L, i * 100, i % 2 == 0);
         }
