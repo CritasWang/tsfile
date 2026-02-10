@@ -82,8 +82,8 @@ public class RleDecoder : IDecoder
     public bool HasNext(byte[] buffer, int offset)
     {
         if (_isLong)
-            return _longQueue.Count > 0 || offset < buffer.Length;
-        return _intQueue.Count > 0 || offset < buffer.Length;
+            return _longQueue.Count > 0 || (_buffer != null && _bufferOffset < _buffer.Length) || offset < buffer.Length;
+        return _intQueue.Count > 0 || (_buffer != null && _bufferOffset < _buffer.Length) || offset < buffer.Length;
     }
     
     public void Reset()
@@ -101,13 +101,13 @@ public class RleDecoder : IDecoder
         
         if (_buffer == null || _bufferOffset >= _buffer.Length)
         {
-            // Read next chunk
-            int length = ReadInt32(buffer, ref offset);
-            _bitWidth = buffer[offset++];
-            _buffer = new byte[length - 1];
-            Array.Copy(buffer, offset, _buffer, 0, _buffer.Length);
-            offset += _buffer.Length;
+            // Java format: length is unsignedVarInt, then bitWidth byte, then encoded data
+            int length = ReadUnsignedVarInt(buffer, ref offset);
+            _buffer = new byte[length];
+            Array.Copy(buffer, offset, _buffer, 0, length);
+            offset += length;
             _bufferOffset = 0;
+            _bitWidth = _buffer[_bufferOffset++];
         }
         
         DecodeNextRun();
@@ -119,12 +119,12 @@ public class RleDecoder : IDecoder
         
         if (_buffer == null || _bufferOffset >= _buffer.Length)
         {
-            int length = ReadInt32(buffer, ref offset);
-            _bitWidth = buffer[offset++];
-            _buffer = new byte[length - 1];
-            Array.Copy(buffer, offset, _buffer, 0, _buffer.Length);
-            offset += _buffer.Length;
+            int length = ReadUnsignedVarInt(buffer, ref offset);
+            _buffer = new byte[length];
+            Array.Copy(buffer, offset, _buffer, 0, length);
+            offset += length;
             _bufferOffset = 0;
+            _bitWidth = _buffer[_bufferOffset++];
         }
         
         DecodeNextRunLong();
@@ -192,46 +192,88 @@ public class RleDecoder : IDecoder
     
     private void UnpackInts(byte[] buffer, ref int offset, int bitWidth, int count)
     {
-        int byteWidth = (bitWidth + 7) / 8;
+        // Java IntPacker format: big-endian bit packing
+        // Values are packed MSB-first into a 32-bit buffer, written as big-endian bytes
+        // Each group of 8 values occupies exactly bitWidth bytes
+        if (bitWidth == 0)
+        {
+            for (int i = 0; i < count; i++)
+                _intQueue.Enqueue(0);
+            return;
+        }
+        
+        int byteIdx = offset;
+        long buf = 0;
+        int totalBits = 0;
         
         for (int i = 0; i < count; i++)
         {
-            var valueBytes = new byte[4];
-            Array.Copy(buffer, offset, valueBytes, 4 - byteWidth, byteWidth);
-            if (BitConverter.IsLittleEndian)
-                Array.Reverse(valueBytes);
+            while (totalBits < bitWidth)
+            {
+                buf = (buf << 8) | (buffer[byteIdx] & 0xFF);
+                byteIdx++;
+                totalBits += 8;
+            }
             
-            int value = BitConverter.ToInt32(valueBytes, 0);
+            int value = (int)(buf >> (totalBits - bitWidth));
+            totalBits -= bitWidth;
+            buf = buf & ((1L << totalBits) - 1);
+            
             _intQueue.Enqueue(value);
-            offset += byteWidth;
         }
+        
+        // Java always packs 8 values into bitWidth bytes, even for partial groups
+        offset += bitWidth;
     }
     
     private void UnpackLongs(byte[] buffer, ref int offset, int bitWidth, int count)
     {
-        int byteWidth = (bitWidth + 7) / 8;
+        // Java LongPacker format: big-endian bit packing, same as IntPacker but for 64-bit values
+        // Each group of 8 values occupies exactly bitWidth bytes
+        if (bitWidth == 0)
+        {
+            for (int i = 0; i < count; i++)
+                _longQueue.Enqueue(0);
+            return;
+        }
+        
+        int byteIdx = offset;
+        // Use BigInteger-like accumulation for wide bit widths
+        long buf = 0;
+        int totalBits = 0;
         
         for (int i = 0; i < count; i++)
         {
-            var valueBytes = new byte[8];
-            Array.Copy(buffer, offset, valueBytes, 8 - byteWidth, byteWidth);
-            if (BitConverter.IsLittleEndian)
-                Array.Reverse(valueBytes);
+            while (totalBits < bitWidth)
+            {
+                buf = (buf << 8) | (buffer[byteIdx] & 0xFF);
+                byteIdx++;
+                totalBits += 8;
+            }
             
-            long value = BitConverter.ToInt64(valueBytes, 0);
+            long value = (buf >> (totalBits - bitWidth));
+            totalBits -= bitWidth;
+            buf = buf & ((1L << totalBits) - 1);
+            
             _longQueue.Enqueue(value);
-            offset += byteWidth;
         }
+        
+        // Java always packs 8 values into bitWidth bytes, even for partial groups
+        offset += bitWidth;
     }
     
-    private static int ReadInt32(byte[] buffer, ref int offset)
+    private static int ReadUnsignedVarInt(byte[] buffer, ref int offset)
     {
-        var bytes = new byte[4];
-        Array.Copy(buffer, offset, bytes, 0, 4);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-        offset += 4;
-        return BitConverter.ToInt32(bytes, 0);
+        int value = 0;
+        int shift = 0;
+        while (true)
+        {
+            byte b = buffer[offset++];
+            value |= (b & 0x7F) << shift;
+            if ((b & 0x80) == 0) break;
+            shift += 7;
+        }
+        return value;
     }
     
     private static int ReadVarInt(byte[] buffer, ref int offset)
@@ -252,23 +294,28 @@ public class RleDecoder : IDecoder
     
     private static int ReadPaddedInt(byte[] buffer, ref int offset, int bitWidth)
     {
+        // Java writes RLE repeated value in little-endian byte order
         int byteWidth = (bitWidth + 7) / 8;
-        var bytes = new byte[4];
-        Array.Copy(buffer, offset, bytes, 4 - byteWidth, byteWidth);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
+        int value = 0;
+        for (int i = 0; i < byteWidth; i++)
+        {
+            value |= (buffer[offset + i] & 0xFF) << (i * 8);
+        }
         offset += byteWidth;
-        return BitConverter.ToInt32(bytes, 0);
+        return value;
     }
     
     private static long ReadPaddedLong(byte[] buffer, ref int offset, int bitWidth)
     {
+        // Java writeLongLittleEndianPaddedOnBitWidth uses BytesUtils.longToBytes which is BIG-ENDIAN
+        // despite the method name suggesting little-endian
         int byteWidth = (bitWidth + 7) / 8;
-        var bytes = new byte[8];
-        Array.Copy(buffer, offset, bytes, 8 - byteWidth, byteWidth);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
+        long value = 0;
+        for (int i = 0; i < byteWidth; i++)
+        {
+            value = (value << 8) | (buffer[offset + i] & 0xFF);
+        }
         offset += byteWidth;
-        return BitConverter.ToInt64(bytes, 0);
+        return value;
     }
 }

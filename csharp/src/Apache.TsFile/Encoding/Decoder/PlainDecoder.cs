@@ -34,9 +34,8 @@ public class PlainDecoder : IDecoder
     
     public int ReadInt(byte[] buffer, ref int offset)
     {
-        var value = ReadIntBigEndian(buffer, offset);
-        offset += 4;
-        return value;
+        // Java PlainEncoder.encode(int) uses writeVarInt (ZigZag)
+        return ReadZigZagVarInt(buffer, ref offset);
     }
     
     public long ReadLong(byte[] buffer, ref int offset)
@@ -48,7 +47,9 @@ public class PlainDecoder : IDecoder
     
     public float ReadFloat(byte[] buffer, ref int offset)
     {
-        var intBits = ReadInt(buffer, ref offset);
+        // Java PlainEncoder.encode(float) writes 4-byte big-endian (not ZigZag VarInt)
+        var intBits = ReadIntBigEndian(buffer, offset);
+        offset += 4;
         return BitConverter.Int32BitsToSingle(intBits);
     }
     
@@ -60,7 +61,8 @@ public class PlainDecoder : IDecoder
     
     public string ReadString(byte[] buffer, ref int offset)
     {
-        var length = ReadVarInt(buffer, ref offset);
+        // Java PlainEncoder.encode(Binary) calls encode(length) which uses writeVarInt (ZigZag)
+        var length = ReadZigZagVarInt(buffer, ref offset);
         var str = System.Text.Encoding.UTF8.GetString(buffer, offset, length);
         offset += length;
         return str;
@@ -68,7 +70,8 @@ public class PlainDecoder : IDecoder
     
     public byte[] ReadBytes(byte[] buffer, ref int offset)
     {
-        var length = ReadVarInt(buffer, ref offset);
+        // Java PlainEncoder.encode(Binary) calls encode(length) which uses writeVarInt (ZigZag)
+        var length = ReadZigZagVarInt(buffer, ref offset);
         var bytes = new byte[length];
         Array.Copy(buffer, offset, bytes, 0, length);
         offset += length;
@@ -105,17 +108,17 @@ public class PlainDecoder : IDecoder
              | buffer[offset + 7];
     }
     
-    private static int ReadVarInt(byte[] buffer, ref int offset)
+    private static int ReadZigZagVarInt(byte[] buffer, ref int offset)
     {
-        int value = 0;
+        uint n = 0;
         int shift = 0;
         byte b;
         do
         {
             b = buffer[offset++];
-            value |= (b & 0x7F) << shift;
+            n |= (uint)(b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) != 0);
-        return value;
+        return (int)(n >> 1) ^ -(int)(n & 1);
     }
 }

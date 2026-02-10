@@ -49,6 +49,34 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <profiles>
+        <profile>
+            <id>v3-interop</id>
+            <dependencies>
+                <dependency>
+                    <groupId>org.apache.tsfile</groupId>
+                    <artifactId>tsfile</artifactId>
+                    <version>1.1.3</version>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/V4TestFileGenerator.java</exclude>
+                                <exclude>**/TableModelV4Generator.java</exclude>
+                                <exclude>**/TsFileInteropGenerator.java</exclude>
+                                <exclude>**/CSharpFileValidator.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
     <build>
         <plugins>
             <plugin>
@@ -57,6 +85,10 @@
                 <configuration>
                     <source>8</source>
                     <target>8</target>
+                    <excludes>
+                        <!-- V3TestFileGenerator uses removed TSRecord API -->
+                        <exclude>**/V3TestFileGenerator.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>
@@ -89,6 +121,44 @@
                 <configuration>
                     <mainClass>org.apache.tsfile.interop.TsFileInteropGenerator</mainClass>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>generate-v4-files</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>org.apache.tsfile.interop.V4TestFileGenerator</mainClass>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-comprehensive-files</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>org.apache.tsfile.interop.TsFileInteropGenerator</mainClass>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-table-model-v4-files</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>org.apache.tsfile.interop.TableModelV4Generator</mainClass>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>generate-v3-files</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>org.apache.tsfile.interop.V3TestFileGenerator</mainClass>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -77,9 +77,10 @@ public class DeviceMetadataIndexEntry : IMetadataIndexEntry
         return byteLen + sizeof(long);
     }
     
-    public static DeviceMetadataIndexEntry Deserialize(BinaryReader reader, Func<int> readVarInt, Func<string> readVarIntString, Func<long> readLong)
+    public static DeviceMetadataIndexEntry Deserialize(BinaryReader reader, Func<int> readUnsignedVarInt, Func<string> readVarIntString, Func<long> readLong)
     {
-        var deviceID = StringArrayDeviceID.Deserialize(reader, readVarInt, readVarIntString);
+        // NOTE: Java uses readUnsignedVarInt for segment count (no ZigZag)
+        var deviceID = StringArrayDeviceID.Deserialize(reader, readUnsignedVarInt, readVarIntString);
         var offset = readLong();
         return new DeviceMetadataIndexEntry(deviceID, offset);
     }
@@ -118,7 +119,9 @@ public class MeasurementMetadataIndexEntry : IMetadataIndexEntry
         get
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(Name);
-            return VarIntSize(bytes.Length) + bytes.Length + sizeof(long);
+            // String length uses ZigZag VarInt: positive n maps to 2n
+            int zigzag = (bytes.Length << 1) ^ (bytes.Length >> 31);
+            return VarIntSize(zigzag) + bytes.Length + sizeof(long);
         }
     }
     
@@ -149,7 +152,9 @@ public class MeasurementMetadataIndexEntry : IMetadataIndexEntry
     private static int WriteVarIntString(BinaryWriter writer, string value)
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        int cnt = WriteVarInt(writer, bytes.Length);
+        // Java uses writeVarInt (ZigZag) for string length
+        int zigzag = (bytes.Length << 1) ^ (bytes.Length >> 31);
+        int cnt = WriteVarInt(writer, zigzag);
         writer.Write(bytes);
         return cnt + bytes.Length;
     }

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+using System.Collections;
 using Apache.TsFile.Common;
 using Apache.TsFile.Compress;
 using Apache.TsFile.Encoding;
@@ -195,6 +196,8 @@ public class TsFileReader : IDisposable
     private void ReadTsFileMetadataV4()
     {
         // V4 metadata structure (from Java TsFileMetadata.deserializeFrom):
+        // NOTE: SEPARATOR marker is BEFORE TimeseriesMetadata, NOT before TsFileMetadata!
+        // The metadataSize from file footer does NOT include SEPARATOR.
         // 1. tableIndexNodeMap: VarInt(count) + [VarIntString(tableName) + MetadataIndexNode]...
         // 2. tableSchemaMap: VarInt(count) + [VarIntString(tableName) + TableSchema]...
         // 3. metaOffset: Int64 (big-endian)
@@ -204,25 +207,42 @@ public class TsFileReader : IDisposable
         try
         {
             // 1. Read table index node map (needed for V4 queries)
-            var tableIndexNodeNum = ReadVarInt();
+            // NOTE: Use ReadUnsignedVarInt for counts (no ZigZag)
+            var tableIndexNodeNum = ReadUnsignedVarInt();
             _tableIndexNodes = new Dictionary<string, MetadataIndexNode>();
 
             for (int i = 0; i < tableIndexNodeNum; i++)
             {
+                // NOTE: ReadVarIntString uses ReadVarInt internally (with ZigZag)
                 var tableName = ReadVarIntString();
                 var indexNode = ReadMetadataIndexNodeV4(isDeviceLevel: true);
                 _tableIndexNodes[tableName] = indexNode;
             }
 
             // 2. Read table schemas
-            var tableSchemaNum = ReadVarInt();
+            // NOTE: Use ReadUnsignedVarInt for counts (no ZigZag)
+            var tableSchemaNum = ReadUnsignedVarInt();
             _schemas = new Dictionary<string, TableSchema>();
 
             for (int i = 0; i < tableSchemaNum; i++)
             {
+                // NOTE: ReadVarIntString uses ReadVarInt internally (with ZigZag)
                 var tableName = ReadVarIntString();
                 var tableSchema = ReadTableSchemaV4(tableName);
                 _schemas[tableName] = tableSchema;
+            }
+
+            // Tree Model V4 files have no table schemas (tableSchemaNum = 0)
+            // In this case, create virtual schemas from table index nodes
+            if (tableSchemaNum == 0 && _tableIndexNodes != null && _tableIndexNodes.Count > 0)
+            {
+                foreach (var kvp in _tableIndexNodes)
+                {
+                    var tableName = kvp.Key;
+                    // Create empty schema - measurements will be populated during query
+                    var schema = new TableSchema(tableName);
+                    _schemas[tableName] = schema;
+                }
             }
 
             // 3. Read metadata offset
@@ -260,18 +280,19 @@ public class TsFileReader : IDisposable
 
     private MetadataIndexNode ReadMetadataIndexNodeV4(bool isDeviceLevel)
     {
-        return MetadataIndexNode.DeserializeV4(_reader, isDeviceLevel, ReadVarInt, ReadVarIntString, () => ReadInt64BigEndian(_reader));
+        // NOTE: Java uses readUnsignedVarInt for entry count (no ZigZag)
+        return MetadataIndexNode.DeserializeV4(_reader, isDeviceLevel, ReadUnsignedVarInt, ReadVarIntString, () => ReadInt64BigEndian(_reader));
     }
 
     private TableSchema ReadTableSchemaV4(string tableName)
     {
         // TableSchema format (from Java TableSchema.deserialize):
-        // - VarInt: column count
+        // - VarInt: column count (NOTE: Java uses readUnsignedVarInt, no ZigZag)
         // - For each column:
         //   - MeasurementSchema (Int32-prefixed strings)
         //   - Int32 (big-endian): columnCategory ordinal
 
-        var columnCount = ReadVarInt();
+        var columnCount = ReadUnsignedVarInt();
         var tableSchema = new TableSchema(tableName);
         tableSchema.ColumnSchemas = new List<ColumnSchema>();
 
@@ -318,21 +339,40 @@ public class TsFileReader : IDisposable
         return System.Text.Encoding.UTF8.GetString(bytes);
     }
     
-    private int ReadVarInt()
+    private int ReadUnsignedVarInt()
     {
-        // Read variable-length integer (similar to ReadWriteForEncodingUtils.readUnsignedVarInt)
-        int result = 0;
+        // Read unsigned variable-length integer (no ZigZag decoding)
+        // (similar to ReadWriteForEncodingUtils.readUnsignedVarInt)
+        int value = 0;
         int shift = 0;
         byte b;
-        
+
         do
         {
             b = _reader.ReadByte();
-            result |= (b & 0x7F) << shift;
+            value |= (b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) != 0);
-        
-        return result;
+
+        return value;
+    }
+
+    private int ReadVarInt()
+    {
+        // Read signed variable-length integer with ZigZag decoding
+        // (similar to ReadWriteForEncodingUtils.readVarInt)
+
+        // First read unsigned VarInt
+        int value = ReadUnsignedVarInt();
+
+        // Then apply ZigZag decoding (Java: value >>> 1)
+        // In C#, use unsigned right shift: (int)((uint)value >> 1)
+        int x = (int)((uint)value >> 1);
+        if ((value & 1) != 0)
+        {
+            x = ~x;
+        }
+        return x;
     }
     
     private string ReadVarIntString()
@@ -400,6 +440,10 @@ public class TsFileReader : IDisposable
             timestamps[i] = ReadInt64BigEndian(timestampData, i * 8);
         }
         
+        // Truncate measurement data to match timestamp count
+        // Some decoders (e.g. Gorilla V2) may decode extra values from padding bits
+        result.TruncateMeasurementData(rowCount);
+        
         // Filter by time range if specified
         if (startTime.HasValue || endTime.HasValue)
         {
@@ -443,10 +487,22 @@ public class TsFileReader : IDisposable
         _reader.ReadInt32(); // row count
     }
     
-    private static List<object> DecodeColumn(IDecoder decoder, TsDataType dataType, byte[] data)
+    private static List<object> DecodeColumn(IDecoder decoder, TsDataType dataType, byte[] data,
+        TsEncoding encoding = TsEncoding.Plain)
     {
         var values = new List<object>();
         int offset = 0;
+        
+        // Java FloatEncoder wraps TS_2DIFF/RLE for float/double with maxPointNumber prefix
+        // Format: [maxPointNumber: uVarInt][encoded int/long data]
+        // Values are stored as round(value * 10^maxPointNumber) as int (float) or long (double)
+        bool isFloatWrapped = (dataType == TsDataType.Float || dataType == TsDataType.Double) &&
+                              (encoding == TsEncoding.Ts2Diff || encoding == TsEncoding.Rle);
+        
+        if (isFloatWrapped)
+        {
+            return DecodeFloatWrappedColumn(decoder, dataType, data);
+        }
         
         while (decoder.HasNext(data, offset))
         {
@@ -465,6 +521,114 @@ public class TsFileReader : IDisposable
         }
         
         return values;
+    }
+    
+    private static List<object> DecodeFloatWrappedColumn(IDecoder decoder, TsDataType dataType, byte[] data)
+    {
+        var values = new List<object>();
+        int offset = 0;
+        
+        // Read maxPointNumber prefix
+        int maxPointNumber = ReadUnsignedVarIntFromBytes(data, ref offset);
+        
+        // Check for overflow bitmap flags (Java FloatEncoder)
+        BitArray? isUnderflowInfo = null;
+        BitArray? valueItselfOverflowInfo = null;
+        
+        if (maxPointNumber == int.MaxValue)
+        {
+            // Has underflow bitmap only
+            int size = ReadUnsignedVarIntFromBytes(data, ref offset);
+            isUnderflowInfo = ReadBitMap(data, ref offset, size);
+            maxPointNumber = ReadUnsignedVarIntFromBytes(data, ref offset);
+        }
+        else if (maxPointNumber == int.MaxValue - 1)
+        {
+            // Has both underflow and value-itself-overflow bitmaps
+            int size = ReadUnsignedVarIntFromBytes(data, ref offset);
+            isUnderflowInfo = ReadBitMap(data, ref offset, size);
+            valueItselfOverflowInfo = ReadBitMap(data, ref offset, size);
+            maxPointNumber = ReadUnsignedVarIntFromBytes(data, ref offset);
+        }
+        
+        double maxPointValue = maxPointNumber <= 0 ? 1.0 : Math.Pow(10, maxPointNumber);
+        
+        // Create a sub-buffer for the actual encoded data
+        byte[] encodedData = new byte[data.Length - offset];
+        Array.Copy(data, offset, encodedData, 0, encodedData.Length);
+        
+        int subOffset = 0;
+        int position = 0;
+        
+        if (dataType == TsDataType.Float)
+        {
+            while (decoder.HasNext(encodedData, subOffset))
+            {
+                int intValue = decoder.ReadInt(encodedData, ref subOffset);
+                float result;
+                if (valueItselfOverflowInfo != null && position < valueItselfOverflowInfo.Count && valueItselfOverflowInfo[position])
+                {
+                    result = BitConverter.Int32BitsToSingle(intValue);
+                }
+                else
+                {
+                    // When no overflow bitmaps exist, all values were scaled by maxPointValue
+                    // When bitmaps exist, underflowInfo[i]=true means value was scaled, false means it was rounded without scaling
+                    double divisor;
+                    if (isUnderflowInfo == null)
+                        divisor = maxPointValue; // no overflow: all values scaled
+                    else if (position < isUnderflowInfo.Count && isUnderflowInfo[position])
+                        divisor = maxPointValue; // bitmap set: value was scaled
+                    else
+                        divisor = 1.0; // bitmap not set: value was rounded without scaling
+                    result = (float)(intValue / divisor);
+                }
+                values.Add(result);
+                position++;
+            }
+        }
+        else // Double
+        {
+            while (decoder.HasNext(encodedData, subOffset))
+            {
+                long longValue = decoder.ReadLong(encodedData, ref subOffset);
+                double result;
+                if (valueItselfOverflowInfo != null && position < valueItselfOverflowInfo.Count && valueItselfOverflowInfo[position])
+                {
+                    result = BitConverter.Int64BitsToDouble(longValue);
+                }
+                else
+                {
+                    double divisor;
+                    if (isUnderflowInfo == null)
+                        divisor = maxPointValue;
+                    else if (position < isUnderflowInfo.Count && isUnderflowInfo[position])
+                        divisor = maxPointValue;
+                    else
+                        divisor = 1.0;
+                    result = longValue / divisor;
+                }
+                values.Add(result);
+                position++;
+            }
+        }
+        
+        return values;
+    }
+    
+    private static BitArray ReadBitMap(byte[] data, ref int offset, int size)
+    {
+        int byteCount = size / 8 + 1;
+        var bits = new BitArray(size);
+        for (int i = 0; i < size && (i / 8) < byteCount; i++)
+        {
+            int byteIdx = i / 8;
+            int bitIdx = i % 8;
+            if ((data[offset + byteIdx] & (1 << (7 - bitIdx))) != 0)
+                bits[i] = true;
+        }
+        offset += byteCount;
+        return bits;
     }
     
     private static long ReadInt64BigEndian(byte[] buffer, int offset)
@@ -497,10 +661,31 @@ public class TsFileReader : IDisposable
         // Navigate to find timeseries metadata for this device
         var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, tableName, measurements);
 
+        // For Tree Model files (no table schemas), dynamically populate measurements from TimeseriesMetadata
+        if (schema.Measurements.Count == 0)
+        {
+            foreach (var tsMetadata in timeseriesMetadataList)
+            {
+                var measurementSchema = new MeasurementSchema(
+                    tsMetadata.MeasurementId,
+                    tsMetadata.DataType,
+                    TsEncoding.Plain, // Default encoding
+                    CompressionType.Uncompressed); // Default compression
+                schema.AddMeasurement(measurementSchema);
+            }
+        }
+
         // Read chunks for each timeseries
         foreach (var tsMetadata in timeseriesMetadataList)
         {
             ReadTimeseriesDataV4(result, tsMetadata, startTime, endTime);
+        }
+
+        // Truncate measurement data to match timestamp count
+        // Some decoders (e.g. Gorilla V2) may decode extra values from padding bits
+        if (result.Timestamps.Count > 0)
+        {
+            result.TruncateMeasurementData(result.Timestamps.Count);
         }
 
         return result;
@@ -548,7 +733,7 @@ public class TsFileReader : IDisposable
 
                 // Read timeseries metadata at this offset
                 _fileStream.Position = measurementEntry.Offset;
-                var tsMetadata = TimeseriesMetadataV4.Deserialize(_reader, ReadVarInt, ReadVarIntString,
+                var tsMetadata = TimeseriesMetadataV4.Deserialize(_reader, ReadUnsignedVarInt, ReadVarIntString,
                     () => ReadInt64BigEndian(_reader), needChunkMetadata: true);
                 result.Add(tsMetadata);
             }
@@ -580,13 +765,40 @@ public class TsFileReader : IDisposable
     {
         _fileStream.Position = chunkMeta.OffsetOfChunkHeader;
 
-        // Read chunk header
+        // Read chunk header marker
         var marker = _reader.ReadByte();
-        if (marker != 0x01 && marker != 0x05) // CHUNK_HEADER or ONLY_ONE_PAGE_CHUNK_HEADER
+        
+        // Handle ChunkGroupHeader (marker 0x00) in tree model V4 files
+        // ChunkGroupHeader format: [marker:0x00][deviceID: unsignedVarInt(segCount) + VarIntString(segments)...]
+        if (marker == 0x00)
+        {
+            // Skip device ID (StringArrayDeviceID)
+            var segCount = ReadUnsignedVarInt();
+            for (int i = 0; i < segCount; i++)
+                ReadVarIntString();
+            // Read the actual chunk header marker
+            marker = _reader.ReadByte();
+        }
+        
+        // Valid markers (from Java MetaMarker):
+        // 0x01 = CHUNK_HEADER (multi-page)
+        // 0x05 = ONLY_ONE_PAGE_CHUNK_HEADER (single-page)
+        // 0x81 = TIME_CHUNK_HEADER (aligned time, multi-page)
+        // 0x85 = ONLY_ONE_PAGE_TIME_CHUNK_HEADER (aligned time, single-page)
+        // 0x41 = VALUE_CHUNK_HEADER (aligned value, multi-page)
+        // 0x45 = ONLY_ONE_PAGE_VALUE_CHUNK_HEADER (aligned value, single-page)
+        var baseMarker = (byte)(marker & 0x3F); // Strip time/value mask bits
+        if (baseMarker != 0x01 && baseMarker != 0x05)
             return;
 
+        bool isTimeChunk = (marker & 0x80) != 0;
+        bool isValueChunk = (marker & 0x40) != 0;
+        bool isAligned = isTimeChunk || isValueChunk;
+        bool hasMultiplePages = baseMarker == 0x01;
+
+        // Read chunk header fields (Java ChunkHeader format)
         var measurementId = ReadVarIntString();
-        var dataSize = ReadVarInt();
+        var dataSize = ReadUnsignedVarInt(); // Java: readUnsignedVarInt
         var chunkDataType = (TsDataType)_reader.ReadByte();
         var compression = (CompressionType)_reader.ReadByte();
         var encoding = (TsEncoding)_reader.ReadByte();
@@ -597,36 +809,189 @@ public class TsFileReader : IDisposable
 
         while (_fileStream.Position < chunkDataEnd)
         {
-            ReadPageV4(result, measurementId, chunkDataType, encoding, compression, startTime, endTime);
+            ReadPageV4(result, measurementId, chunkDataType, encoding, compression,
+                startTime, endTime, isAligned, isTimeChunk, hasMultiplePages);
         }
     }
 
     private void ReadPageV4(QueryResult result, string measurementId, TsDataType dataType,
-        TsEncoding encoding, CompressionType compression, long? startTime, long? endTime)
+        TsEncoding encoding, CompressionType compression, long? startTime, long? endTime,
+        bool isAligned, bool isTimeChunk, bool hasMultiplePages)
     {
-        // Read page header
-        var uncompressedSize = ReadVarInt();
-        var compressedSize = ReadVarInt();
+        // Read page header (Java PageHeader format)
+        // uncompressedSize and compressedSize are unsignedVarInt
+        var uncompressedSize = ReadUnsignedVarInt();
+        if (uncompressedSize == 0)
+            return; // Empty page
+        var compressedSize = ReadUnsignedVarInt();
+
+        // For multi-page chunks, page header includes statistics; skip them
+        if (hasMultiplePages)
+        {
+            SkipStatisticsV4(dataType);
+        }
 
         // Read compressed page data
         var compressedData = _reader.ReadBytes(compressedSize);
 
-        // Decompress
-        var uncompressor = CompressorFactory.GetUncompressor(compression);
-        var pageData = uncompressor.Uncompress(compressedData);
+        // Decompress using known uncompressedSize from page header
+        // (Java format does NOT prepend size to compressed data, unlike C# LZ4 wrapper)
+        byte[] pageData;
+        if (compression == CompressionType.Uncompressed)
+            pageData = compressedData;
+        else
+            pageData = DecompressPageData(compressedData, uncompressedSize, compression);
 
-        // Decode timestamps and values
-        // Page format: [timestamps][values]
-        // For time column: timestamps only
-        // For value column: values only
-
-        var decoder = DecoderFactory.CreateDecoder(encoding, dataType);
-        var values = DecodeColumn(decoder, dataType, pageData);
-
-        // Add to result
-        if (values.Count > 0)
+        if (isAligned)
         {
-            result.AddMeasurementData(measurementId, values);
+            // Aligned (table model) format: time and value are in separate chunks
+            if (isTimeChunk)
+            {
+                // Decode timestamps from time chunk
+                var timeDecoder = DecoderFactory.CreateDecoder(encoding, TsDataType.Int64);
+                var timestamps = DecodeTimestamps(timeDecoder, pageData);
+                result.AddTimestamps(timestamps, null);
+            }
+            else
+            {
+                // Decode values from value chunk
+                var decoder = DecoderFactory.CreateDecoder(encoding, dataType);
+                var values = DecodeColumn(decoder, dataType, pageData, encoding);
+                if (values.Count > 0)
+                    result.AddMeasurementData(measurementId, values);
+            }
+        }
+        else
+        {
+            // Non-aligned (tree model) format: timestamps and values in same page
+            // Page data: [timeBufferLength: unsignedVarInt][timeBuffer][valueBuffer]
+            int offset = 0;
+            int timeBufferLength = ReadUnsignedVarIntFromBytes(pageData, ref offset);
+            
+            var timeBuffer = new byte[timeBufferLength];
+            Array.Copy(pageData, offset, timeBuffer, 0, timeBufferLength);
+            
+            var valueBuffer = new byte[pageData.Length - offset - timeBufferLength];
+            Array.Copy(pageData, offset + timeBufferLength, valueBuffer, 0, valueBuffer.Length);
+
+            // Decode timestamps (always TS_2DIFF/INT64 for time column)
+            var timeDecoder = DecoderFactory.CreateDecoder(TsEncoding.Ts2Diff, TsDataType.Int64);
+            var timestamps = DecodeTimestamps(timeDecoder, timeBuffer);
+
+            // Decode values
+            var valueDecoder = DecoderFactory.CreateDecoder(encoding, dataType);
+            var values = DecodeColumn(valueDecoder, dataType, valueBuffer, encoding);
+
+            // Apply time range filter
+            if (startTime.HasValue || endTime.HasValue)
+            {
+                var filteredTimestamps = new List<long>();
+                var filteredValues = new List<object>();
+                for (int i = 0; i < timestamps.Length && i < values.Count; i++)
+                {
+                    if ((!startTime.HasValue || timestamps[i] >= startTime.Value) &&
+                        (!endTime.HasValue || timestamps[i] <= endTime.Value))
+                    {
+                        filteredTimestamps.Add(timestamps[i]);
+                        filteredValues.Add(values[i]);
+                    }
+                }
+                if (filteredTimestamps.Count > 0)
+                {
+                    result.AddTimestamps(filteredTimestamps.ToArray(), null);
+                    result.AddMeasurementData(measurementId, filteredValues);
+                }
+            }
+            else
+            {
+                result.AddTimestamps(timestamps, null);
+                if (values.Count > 0)
+                    result.AddMeasurementData(measurementId, values);
+            }
+        }
+    }
+
+    private long[] DecodeTimestamps(IDecoder decoder, byte[] data)
+    {
+        var timestamps = new List<long>();
+        int offset = 0;
+        while (decoder.HasNext(data, offset))
+        {
+            timestamps.Add(decoder.ReadLong(data, ref offset));
+        }
+        return timestamps.ToArray();
+    }
+
+    private static int ReadUnsignedVarIntFromBytes(byte[] data, ref int offset)
+    {
+        int value = 0;
+        int shift = 0;
+        byte b;
+        do
+        {
+            b = data[offset++];
+            value |= (b & 0x7F) << shift;
+            shift += 7;
+        } while ((b & 0x80) != 0);
+        return value;
+    }
+
+    private static byte[] DecompressPageData(byte[] compressedData, int uncompressedSize, CompressionType compression)
+    {
+        // Java TsFile format does NOT prepend size to compressed data.
+        // The C# LZ4 wrapper expects a 4-byte size prefix, so we handle LZ4 specially.
+        switch (compression)
+        {
+            case CompressionType.Lz4:
+                var output = new byte[uncompressedSize];
+                K4os.Compression.LZ4.LZ4Codec.Decode(
+                    compressedData, 0, compressedData.Length,
+                    output, 0, uncompressedSize);
+                return output;
+            default:
+                var uncompressor = CompressorFactory.GetUncompressor(compression);
+                return uncompressor.Uncompress(compressedData);
+        }
+    }
+
+    private void SkipStatisticsV4(TsDataType dataType)
+    {
+        // Skip count (unsignedVarInt)
+        ReadUnsignedVarInt();
+        // Skip startTime and endTime (2 x Int64 big-endian)
+        _reader.ReadBytes(16);
+        // Skip type-specific statistics (sizes from Java *Statistics.getStatsSize())
+        switch (dataType)
+        {
+            case TsDataType.Boolean:
+                _reader.ReadBytes(10); // first(1) + last(1) + sum(8)
+                break;
+            case TsDataType.Int32:
+            case TsDataType.Date:
+                _reader.ReadBytes(24); // min(4) + max(4) + first(4) + last(4) + sum(8)
+                break;
+            case TsDataType.Int64:
+            case TsDataType.Timestamp:
+                _reader.ReadBytes(40); // min(8) + max(8) + first(8) + last(8) + sum(8)
+                break;
+            case TsDataType.Float:
+                _reader.ReadBytes(24); // min(4) + max(4) + first(4) + last(4) + sum(8)
+                break;
+            case TsDataType.Double:
+                _reader.ReadBytes(40); // min(8) + max(8) + first(8) + last(8) + sum(8)
+                break;
+            case TsDataType.Text:
+            case TsDataType.String:
+                // first(4+len) + last(4+len), no min/max
+                for (int i = 0; i < 2; i++)
+                {
+                    var len = ReadInt32BigEndian(_reader);
+                    if (len > 0) _reader.ReadBytes(len);
+                }
+                break;
+            case TsDataType.Blob:
+                // 0 bytes (no stats)
+                break;
         }
     }
 
@@ -686,6 +1051,18 @@ public class QueryResult
         }
         
         MeasurementData[measurement].AddRange(values);
+    }
+    
+    internal void TruncateMeasurementData(int maxCount)
+    {
+        foreach (var key in MeasurementData.Keys)
+        {
+            var list = MeasurementData[key];
+            if (list.Count > maxCount)
+            {
+                list.RemoveRange(maxCount, list.Count - maxCount);
+            }
+        }
     }
     
     public Tablet ToTablet()

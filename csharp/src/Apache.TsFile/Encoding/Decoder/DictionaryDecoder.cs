@@ -86,10 +86,11 @@ namespace Apache.TsFile.Encoding.Decoder
         {
             _dictionary.Clear();
             
-            int dictSize = ReadVarInt(data, ref offset);
+            // Java DictionaryEncoder uses writeVarInt (ZigZag) for map size and entry lengths
+            int dictSize = ReadZigZagVarInt(data, ref offset);
             for (int i = 0; i < dictSize; i++)
             {
-                int length = ReadVarInt(data, ref offset);
+                int length = ReadZigZagVarInt(data, ref offset);
                 string str = System.Text.Encoding.UTF8.GetString(data, offset, length);
                 offset += length;
                 _dictionary.Add(str);
@@ -100,16 +101,22 @@ namespace Apache.TsFile.Encoding.Decoder
 
         private void LoadValues(byte[] data, ref int offset)
         {
-            int valueCount = ReadVarInt(data, ref offset);
-            for (int i = 0; i < valueCount; i++)
+            // Java DictionaryEncoder uses IntRleEncoder for indices
+            // RLE format: [length: uVarInt][bitWidth: byte][encoded runs]
+            var rleDecoder = new Apache.TsFile.Encoding.Decoder.RleDecoder(Enums.TsDataType.Int32);
+            byte[] remaining = new byte[data.Length - offset];
+            Array.Copy(data, offset, remaining, 0, remaining.Length);
+            int subOffset = 0;
+            while (rleDecoder.HasNext(remaining, subOffset))
             {
-                int index = ReadVarInt(data, ref offset);
+                int index = rleDecoder.ReadInt(remaining, ref subOffset);
                 if (index < 0 || index >= _dictionary.Count)
                 {
-                    throw new InvalidOperationException($"Invalid dictionary index: {index}");
+                    break;
                 }
                 _values.Enqueue(_dictionary[index]);
             }
+            offset += subOffset;
         }
 
         public bool HasNext(byte[] data, int offset)
@@ -134,7 +141,7 @@ namespace Apache.TsFile.Encoding.Decoder
             _dictionaryLoaded = false;
         }
 
-        private int ReadVarInt(byte[] data, ref int offset)
+        private int ReadZigZagVarInt(byte[] data, ref int offset)
         {
             uint result = 0;
             int shift = 0;
@@ -146,7 +153,8 @@ namespace Apache.TsFile.Encoding.Decoder
 
                 if ((b & 0x80) == 0)
                 {
-                    return (int)result;
+                    // ZigZag decode
+                    return (int)(result >> 1) ^ -(int)(result & 1);
                 }
 
                 shift += 7;

@@ -66,14 +66,14 @@ public class GorillaV1Encoder : IEncoder
     
     public void Encode(float value, MemoryStream stream)
     {
-        long longValue = BitConverter.SingleToInt32Bits(value);
-        EncodeValue(longValue, 32);
+        int intValue = BitConverter.SingleToInt32Bits(value);
+        EncodeFloat(intValue);
     }
     
     public void Encode(double value, MemoryStream stream)
     {
         long longValue = BitConverter.DoubleToInt64Bits(value);
-        EncodeValue(longValue, 64);
+        EncodeDouble(longValue);
     }
     
     public void Encode(string value, MemoryStream stream)
@@ -88,6 +88,11 @@ public class GorillaV1Encoder : IEncoder
     
     public void Flush(MemoryStream stream)
     {
+        // Java V1: write NaN as ending marker, then flush
+        if (_bitWidth == 32)
+            EncodeFloat(BitConverter.SingleToInt32Bits(float.NaN));
+        else
+            EncodeDouble(BitConverter.DoubleToInt64Bits(double.NaN));
         ClearBuffer();
         stream.Write(_bytes.ToArray());
         Reset();
@@ -103,66 +108,127 @@ public class GorillaV1Encoder : IEncoder
         return _bytes.Count + 100;
     }
     
-    private void EncodeValue(long value, int bitWidth)
+    /// <summary>
+    /// Java V1 float encoding: first value as 4 bytes little-endian,
+    /// then XOR-compressed bits. Uses LEADING_ZERO_BITS=5, FLOAT_VALUE_LENGTH=6.
+    /// Leading/trailing zeros tracked from the VALUE, not XOR.
+    /// </summary>
+    private void EncodeFloat(int value)
     {
         if (!_flag)
         {
-            // First value: write as-is
-            WriteLongBits(value, bitWidth);
-            _storedValue = value;
             _flag = true;
+            _storedValue = value;
+            _leadingZeroNum = CountLeadingZeros32(value);
+            _tailingZeroNum = CountTrailingZeros32(value);
+            // Write first value as 4 bytes little-endian
+            _bytes.Add((byte)(value & 0xFF));
+            _bytes.Add((byte)((value >> 8) & 0xFF));
+            _bytes.Add((byte)((value >> 16) & 0xFF));
+            _bytes.Add((byte)((value >> 24) & 0xFF));
             return;
         }
         
-        // XOR with previous value
-        long xor = _storedValue ^ value;
-        
-        if (xor == 0)
+        int preValue = (int)_storedValue;
+        int tmp = value ^ preValue;
+        if (tmp == 0)
         {
-            // Value is same as previous: write single '0' bit
             WriteBit(false);
         }
         else
         {
-            // Value changed: write '1' bit
-            WriteBit(true);
-            
-            int leadingZeros = CountLeadingZeros(xor, bitWidth);
-            int tailingZeros = CountTrailingZeros(xor, bitWidth);
-            
-            if (leadingZeros >= _leadingZeroNum && tailingZeros >= _tailingZeroNum)
+            int leadingZeroNumTmp = CountLeadingZeros32(tmp);
+            int tailingZeroNumTmp = CountTrailingZeros32(tmp);
+            if (leadingZeroNumTmp >= _leadingZeroNum && tailingZeroNumTmp >= _tailingZeroNum)
             {
-                // Use previous block: write '0' control bit
+                // case '10'
+                WriteBit(true);
                 WriteBit(false);
-                int significantBits = bitWidth - _leadingZeroNum - _tailingZeroNum;
-                WriteLongBits(xor >> _tailingZeroNum, significantBits);
+                WriteBitsRange(tmp, 32 - 1 - _leadingZeroNum, _tailingZeroNum);
             }
             else
             {
-                // New block: write '1' control bit + leading + length + meaningful bits
+                // case '11'
                 WriteBit(true);
-                
-                if (bitWidth == 32)
-                {
-                    WriteIntBits(leadingZeros, 5);
-                    int significantBits = bitWidth - leadingZeros - tailingZeros;
-                    WriteIntBits(significantBits, 5);
-                    WriteLongBits(xor >> tailingZeros, significantBits);
-                }
-                else // 64-bit
-                {
-                    WriteIntBits(leadingZeros, 6);
-                    int significantBits = bitWidth - leadingZeros - tailingZeros;
-                    WriteIntBits(significantBits, 6);
-                    WriteLongBits(xor >> tailingZeros, significantBits);
-                }
-                
-                _leadingZeroNum = leadingZeros;
-                _tailingZeroNum = tailingZeros;
+                WriteBit(true);
+                WriteIntBits(leadingZeroNumTmp, 5); // LEADING_ZERO_BITS_LENGTH_32BIT
+                int significantBits = 32 - leadingZeroNumTmp - tailingZeroNumTmp;
+                WriteIntBits(significantBits, 6); // FLOAT_VALUE_LENGTH
+                WriteBitsRange(tmp, 32 - 1 - leadingZeroNumTmp, tailingZeroNumTmp);
             }
         }
-        
         _storedValue = value;
+        _leadingZeroNum = CountLeadingZeros32(value);
+        _tailingZeroNum = CountTrailingZeros32(value);
+    }
+    
+    /// <summary>
+    /// Java V1 double encoding: first value as 8 bytes little-endian,
+    /// then XOR-compressed bits. Uses LEADING_ZERO_BITS=6, DOUBLE_VALUE_LENGTH=7.
+    /// </summary>
+    private void EncodeDouble(long value)
+    {
+        if (!_flag)
+        {
+            _flag = true;
+            _storedValue = value;
+            _leadingZeroNum = CountLeadingZeros64(value);
+            _tailingZeroNum = CountTrailingZeros64(value);
+            // Write first value as 8 bytes little-endian
+            for (int i = 0; i < 8; i++)
+                _bytes.Add((byte)((value >> (i * 8)) & 0xFF));
+            return;
+        }
+        
+        long preValue = _storedValue;
+        long tmp = value ^ preValue;
+        if (tmp == 0)
+        {
+            WriteBit(false);
+        }
+        else
+        {
+            int leadingZeroNumTmp = CountLeadingZeros64(tmp);
+            int tailingZeroNumTmp = CountTrailingZeros64(tmp);
+            if (leadingZeroNumTmp >= _leadingZeroNum && tailingZeroNumTmp >= _tailingZeroNum)
+            {
+                // case '10'
+                WriteBit(true);
+                WriteBit(false);
+                WriteLongBitsRange(tmp, 64 - 1 - _leadingZeroNum, _tailingZeroNum);
+            }
+            else
+            {
+                // case '11'
+                WriteBit(true);
+                WriteBit(true);
+                WriteIntBits(leadingZeroNumTmp, 6); // LEADING_ZERO_BITS_LENGTH_64BIT
+                int significantBits = 64 - leadingZeroNumTmp - tailingZeroNumTmp;
+                WriteIntBits(significantBits, 7); // DOUBLE_VALUE_LENGTH
+                WriteLongBitsRange(tmp, 64 - 1 - leadingZeroNumTmp, tailingZeroNumTmp);
+            }
+        }
+        _storedValue = value;
+        _leadingZeroNum = CountLeadingZeros64(value);
+        _tailingZeroNum = CountTrailingZeros64(value);
+    }
+    
+    /// <summary>Write bits from position start down to end (inclusive).</summary>
+    private void WriteBitsRange(int num, int start, int end)
+    {
+        for (int i = start; i >= end; i--)
+        {
+            WriteBit((num & (1 << i)) != 0);
+        }
+    }
+    
+    /// <summary>Write bits from position start down to end (inclusive).</summary>
+    private void WriteLongBitsRange(long num, int start, int end)
+    {
+        for (int i = start; i >= end; i--)
+        {
+            WriteBit((num & (1L << i)) != 0);
+        }
     }
     
     private void WriteBit(bool bit)
@@ -219,33 +285,57 @@ public class GorillaV1Encoder : IEncoder
         _bytes.Clear();
     }
     
-    private static int CountLeadingZeros(long value, int bitWidth)
+    private static int CountLeadingZeros32(int value)
     {
-        if (value == 0) return bitWidth;
-        
-        int count = 0;
-        long mask = 1L << (bitWidth - 1);
-        
-        while ((value & mask) == 0 && count < bitWidth)
-        {
-            count++;
-            mask >>= 1;
-        }
-        
-        return count;
+        if (value == 0) return 32;
+        int n = 0;
+        uint v = (uint)value;
+        if (v <= 0x0000FFFF) { n += 16; v <<= 16; }
+        if (v <= 0x00FFFFFF) { n += 8; v <<= 8; }
+        if (v <= 0x0FFFFFFF) { n += 4; v <<= 4; }
+        if (v <= 0x3FFFFFFF) { n += 2; v <<= 2; }
+        if (v <= 0x7FFFFFFF) { n += 1; }
+        return n;
     }
     
-    private static int CountTrailingZeros(long value, int bitWidth)
+    private static int CountTrailingZeros32(int value)
     {
-        if (value == 0) return bitWidth;
-        
-        int count = 0;
-        while ((value & 1) == 0 && count < bitWidth)
-        {
-            count++;
-            value >>= 1;
-        }
-        
-        return count;
+        if (value == 0) return 32;
+        int n = 0;
+        uint v = (uint)value;
+        if ((v & 0x0000FFFF) == 0) { n += 16; v >>= 16; }
+        if ((v & 0x000000FF) == 0) { n += 8; v >>= 8; }
+        if ((v & 0x0000000F) == 0) { n += 4; v >>= 4; }
+        if ((v & 0x00000003) == 0) { n += 2; v >>= 2; }
+        if ((v & 0x00000001) == 0) { n += 1; }
+        return n;
+    }
+    
+    private static int CountLeadingZeros64(long value)
+    {
+        if (value == 0) return 64;
+        int n = 0;
+        ulong v = (ulong)value;
+        if (v <= 0x00000000FFFFFFFF) { n += 32; v <<= 32; }
+        if (v <= 0x0000FFFFFFFFFFFF) { n += 16; v <<= 16; }
+        if (v <= 0x00FFFFFFFFFFFFFF) { n += 8; v <<= 8; }
+        if (v <= 0x0FFFFFFFFFFFFFFF) { n += 4; v <<= 4; }
+        if (v <= 0x3FFFFFFFFFFFFFFF) { n += 2; v <<= 2; }
+        if (v <= 0x7FFFFFFFFFFFFFFF) { n += 1; }
+        return n;
+    }
+    
+    private static int CountTrailingZeros64(long value)
+    {
+        if (value == 0) return 64;
+        int n = 0;
+        ulong v = (ulong)value;
+        if ((v & 0x00000000FFFFFFFF) == 0) { n += 32; v >>= 32; }
+        if ((v & 0x000000000000FFFF) == 0) { n += 16; v >>= 16; }
+        if ((v & 0x00000000000000FF) == 0) { n += 8; v >>= 8; }
+        if ((v & 0x000000000000000F) == 0) { n += 4; v >>= 4; }
+        if ((v & 0x0000000000000003) == 0) { n += 2; v >>= 2; }
+        if ((v & 0x0000000000000001) == 0) { n += 1; }
+        return n;
     }
 }

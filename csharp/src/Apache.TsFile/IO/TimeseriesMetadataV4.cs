@@ -75,14 +75,15 @@ public class TimeseriesMetadataV4
     /// <summary>
     /// Deserializes a TimeseriesMetadata from a binary reader.
     /// </summary>
-    public static TimeseriesMetadataV4 Deserialize(BinaryReader reader, Func<int> readVarInt, Func<string> readVarIntString, Func<long> readLong, bool needChunkMetadata = true)
+    public static TimeseriesMetadataV4 Deserialize(BinaryReader reader, Func<int> readUnsignedVarInt, Func<string> readVarIntString, Func<long> readLong, bool needChunkMetadata = true)
     {
         var metadata = new TimeseriesMetadataV4();
         metadata.TimeSeriesMetadataType = reader.ReadByte();
         metadata.MeasurementId = readVarIntString();
         metadata.DataType = (TsDataType)reader.ReadByte();
-        metadata.ChunkMetadataListDataSize = readVarInt();
-        metadata.Statistics = StatisticsV4.Deserialize(reader, metadata.DataType, readVarInt, readLong);
+        // Java: ReadWriteForEncodingUtils.readUnsignedVarInt (no ZigZag)
+        metadata.ChunkMetadataListDataSize = readUnsignedVarInt();
+        metadata.Statistics = StatisticsV4.Deserialize(reader, metadata.DataType, readUnsignedVarInt, readLong);
         
         if (needChunkMetadata)
         {
@@ -90,7 +91,7 @@ public class TimeseriesMetadataV4
             var startPos = reader.BaseStream.Position;
             while (reader.BaseStream.Position < startPos + metadata.ChunkMetadataListDataSize)
             {
-                var chunkMeta = ChunkMetadataV4.Deserialize(reader, metadata, readVarInt, readLong);
+                var chunkMeta = ChunkMetadataV4.Deserialize(reader, metadata, readUnsignedVarInt, readLong);
                 metadata.ChunkMetadataList.Add(chunkMeta);
             }
         }
@@ -123,29 +124,30 @@ public class StatisticsV4
     public object? LastValue { get; set; }
     public object? SumValue { get; set; }
     
-    public static StatisticsV4 Deserialize(BinaryReader reader, TsDataType dataType, Func<int> readVarInt, Func<long> readLong)
+    public static StatisticsV4 Deserialize(BinaryReader reader, TsDataType dataType, Func<int> readUnsignedVarInt, Func<long> readLong)
     {
         var stats = new StatisticsV4();
         
-        // Count
-        stats.Count = readLong();
+        // Count is unsignedVarInt in Java (ReadWriteForEncodingUtils.readUnsignedVarInt)
+        stats.Count = readUnsignedVarInt();
         
         // StartTime and EndTime
         stats.StartTime = readLong();
         stats.EndTime = readLong();
         
-        // Type-specific values
+        // Type-specific values (must match Java *Statistics.serializeStats exactly)
         switch (dataType)
         {
             case TsDataType.Boolean:
-                stats.MinValue = reader.ReadBoolean();
-                stats.MaxValue = reader.ReadBoolean();
+                // Java BooleanStatistics: first(1) + last(1) + sum(8) = 10 bytes, NO min/max
                 stats.FirstValue = reader.ReadBoolean();
                 stats.LastValue = reader.ReadBoolean();
                 stats.SumValue = readLong(); // sum of true values
                 break;
                 
             case TsDataType.Int32:
+            case TsDataType.Date:
+                // Java IntegerStatistics/DateStatistics: min(4) + max(4) + first(4) + last(4) + sum(8) = 24 bytes
                 stats.MinValue = ReadInt32BigEndian(reader);
                 stats.MaxValue = ReadInt32BigEndian(reader);
                 stats.FirstValue = ReadInt32BigEndian(reader);
@@ -155,6 +157,7 @@ public class StatisticsV4
                 
             case TsDataType.Int64:
             case TsDataType.Timestamp:
+                // Java LongStatistics/TimestampStatistics: min(8) + max(8) + first(8) + last(8) + sum(8) = 40 bytes
                 stats.MinValue = readLong();
                 stats.MaxValue = readLong();
                 stats.FirstValue = readLong();
@@ -163,6 +166,7 @@ public class StatisticsV4
                 break;
                 
             case TsDataType.Float:
+                // Java FloatStatistics: min(4) + max(4) + first(4) + last(4) + sum(8) = 24 bytes
                 stats.MinValue = ReadFloatBigEndian(reader);
                 stats.MaxValue = ReadFloatBigEndian(reader);
                 stats.FirstValue = ReadFloatBigEndian(reader);
@@ -171,6 +175,7 @@ public class StatisticsV4
                 break;
                 
             case TsDataType.Double:
+                // Java DoubleStatistics: min(8) + max(8) + first(8) + last(8) + sum(8) = 40 bytes
                 stats.MinValue = ReadDoubleBigEndian(reader);
                 stats.MaxValue = ReadDoubleBigEndian(reader);
                 stats.FirstValue = ReadDoubleBigEndian(reader);
@@ -180,29 +185,21 @@ public class StatisticsV4
                 
             case TsDataType.Text:
             case TsDataType.String:
-            case TsDataType.Blob:
-                // For text/string/blob types, statistics contain binary data
-                var minLen = readVarInt();
-                stats.MinValue = reader.ReadBytes(minLen);
-                var maxLen = readVarInt();
-                stats.MaxValue = reader.ReadBytes(maxLen);
-                var firstLen = readVarInt();
-                stats.FirstValue = reader.ReadBytes(firstLen);
-                var lastLen = readVarInt();
-                stats.LastValue = reader.ReadBytes(lastLen);
+                // Java BinaryStatistics/StringStatistics: first(4+len) + last(4+len), NO min/max
+                // Uses Int32 (big-endian) length prefix (ReadWriteIOUtils.readBinary)
+                var firstLen = ReadInt32BigEndian(reader);
+                stats.FirstValue = firstLen > 0 ? reader.ReadBytes(firstLen) : Array.Empty<byte>();
+                var lastLen = ReadInt32BigEndian(reader);
+                stats.LastValue = lastLen > 0 ? reader.ReadBytes(lastLen) : Array.Empty<byte>();
                 stats.SumValue = 0.0;
                 break;
                 
-            case TsDataType.Date:
-                stats.MinValue = ReadInt32BigEndian(reader);
-                stats.MaxValue = ReadInt32BigEndian(reader);
-                stats.FirstValue = ReadInt32BigEndian(reader);
-                stats.LastValue = ReadInt32BigEndian(reader);
-                stats.SumValue = 0.0;
+            case TsDataType.Blob:
+                // Java BlobStatistics: 0 bytes (no stats)
                 break;
                 
             default:
-                // Skip unknown types
+                // Skip unknown types (e.g., VECTOR/TimeStatistics = 0 bytes)
                 break;
         }
         
@@ -264,44 +261,29 @@ public class ChunkMetadataV4
     /// </summary>
     public StatisticsV4? Statistics { get; set; }
     
-    public static ChunkMetadataV4 Deserialize(BinaryReader reader, TimeseriesMetadataV4 timeseriesMetadata, Func<int> readVarInt, Func<long> readLong)
+    public static ChunkMetadataV4 Deserialize(BinaryReader reader, TimeseriesMetadataV4 timeseriesMetadata, Func<int> readUnsignedVarInt, Func<long> readLong)
     {
         var meta = new ChunkMetadataV4();
         meta.MeasurementId = timeseriesMetadata.MeasurementId;
         meta.DataType = timeseriesMetadata.DataType;
         
-        // Read offset (as unsigned var long)
-        meta.OffsetOfChunkHeader = ReadUnsignedVarLong(reader);
+        // Read offset as big-endian Int64 (Java: ReadWriteIOUtils.readLong)
+        meta.OffsetOfChunkHeader = readLong();
         
-        // Check if this timeseries has multiple pages (needs chunk-level statistics)
-        if ((timeseriesMetadata.TimeSeriesMetadataType & TimeseriesMetadataV4.HasMultiplePages) != 0)
+        // Check if this timeseries has multiple chunks (bit 0 of type, masking out time/value bits)
+        // Java: (timeseriesMetadata.getTimeSeriesMetadataType() & 0x3F) != 0
+        if ((timeseriesMetadata.TimeSeriesMetadataType & 0x3F) != 0)
         {
-            // Has multiple pages, so no chunk-level statistics
-            meta.Statistics = null;
+            // Has multiple chunks, each chunk metadata has its own statistics
+            meta.Statistics = StatisticsV4.Deserialize(reader, meta.DataType, readUnsignedVarInt, readLong);
         }
         else
         {
-            // Single page chunk, read chunk-level statistics
-            meta.Statistics = StatisticsV4.Deserialize(reader, meta.DataType, readVarInt, readLong);
+            // Single chunk, no per-chunk statistics (use timeseries-level statistics)
+            meta.Statistics = timeseriesMetadata.Statistics;
         }
         
         return meta;
-    }
-    
-    private static long ReadUnsignedVarLong(BinaryReader reader)
-    {
-        long result = 0;
-        int shift = 0;
-        byte b;
-        
-        do
-        {
-            b = reader.ReadByte();
-            result |= (long)(b & 0x7F) << shift;
-            shift += 7;
-        } while ((b & 0x80) != 0);
-        
-        return result;
     }
     
     public override string ToString()

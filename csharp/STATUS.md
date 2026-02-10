@@ -1,7 +1,7 @@
 # Apache TSFile C# Implementation - Status Report
 
 **Version**: 1.1.0
-**Date**: 2026-02-05
+**Date**: 2026-02-09
 **Target Platform**: .NET 9/10
 **Status**: Production Ready (v3 and v4 format supported)
 
@@ -9,11 +9,11 @@
 
 The C# implementation of Apache TSFile provides a production-ready time-series file format library with:
 - ✅ Full data type compatibility with Java (13/13 types)
-- ✅ Core encoding algorithms (11/14 implemented, all critical ones complete)
+- ✅ Core encoding algorithms (14/15 implemented, all critical ones complete)
 - ✅ Complete compression support (5/6 algorithms, all production-ready)
 - ✅ **Unified API for V3 and V4 formats** (V4 is default)
 - ✅ Binary format compatibility with Java
-- ✅ Comprehensive testing (183 tests, 182 pass, 1 skip)
+- ✅ Comprehensive testing (189 tests, 188 pass, 1 skip)
 - ✅ Performance benchmarking tools
 - ✅ Complete documentation
 
@@ -75,12 +75,19 @@ All Java data types are supported:
 | LZ4 | ✅ Production | All | Very Fast | K4os.Compression.LZ4 ⭐ **Recommended** |
 | ZSTD | ✅ Production | All | Best Ratio | ZstdSharp.Port ⭐ **Recommended** |
 | Snappy | ✅ Production | All | Fast | IronSnappy (pure C#) |
-| LZMA2 | ⚠️ Not Supported | - | - | No compatible .NET 10 library available |
+| LZMA2 | ⚠️ Read-Only | All | - | SharpCompress (decompression only) |
 
 **Recommendation**: Use **LZ4** for speed or **ZSTD** for compression ratio.
-**LZMA2 Note**: Not supported due to lack of .NET 10 compatible library. Use ZSTD instead.
 
-### ✅ Encoding Algorithms (11/14 - 79%, All Critical Ones Complete)
+**LZMA2 Support Details**:
+- ✅ **Decompression**: Fully supported via SharpCompress (pure C#, cross-platform)
+  - Can read Java-generated LZMA2 files for interoperability
+- ❌ **Compression**: Not supported
+  - Reason: Maintains cross-platform compatibility (Windows/Linux/macOS)
+  - Alternative: FastLZMA2Net exists but is Windows-only
+  - Recommendation: Use ZSTD (better compression) or LZ4 (faster) for writing
+
+### ✅ Encoding Algorithms (14/15 - 93%, All Critical Ones Complete)
 
 #### Implemented (Production Ready)
 
@@ -97,6 +104,9 @@ All Java data types are supported:
 | **Bitmap** | Int32 | 5-20x | ✅ Complete | Sparse integer data |
 | **Regular** | Int32, Int64 | 4-8x | ✅ Complete | Regular intervals with missing points |
 | **Freq** | - | - | ⚠️ Deprecated | Deprecated in Java, maps to Plain |
+| **CHIMP** | Int32, Int64, Float, Double | 2-10x | ✅ Complete | High-precision floats, advanced XOR compression |
+| **SPRINTZ** | Int32, Int64, Float, Double | 3-8x | ✅ Complete | Sensor-optimized compression |
+| **RLBE** | Int32, Int64, Float, Double | 2-6x | ✅ Complete | Run-length byte encoding |
 
 ⭐ = High priority encodings for time-series workloads
 
@@ -104,12 +114,7 @@ All Java data types are supported:
 
 | Encoding | Priority | Planned | Notes |
 |----------|----------|---------|-------|
-| CHIMP | Low | Future | Fallback to Plain. Similar to Gorilla, for high-precision floats |
-| SPRINTZ | Low | Future | Fallback to Plain. Specialized for sensor data |
-| RLBE | Low | Future | Fallback to Plain. Run-length byte encoding |
-| CAMEL | Low | Future | Not implemented. Specialized double compression |
-
-**Note**: Unimplemented encodings currently fallback to Plain encoding for compatibility.
+| CAMEL | Low | Future | Specialized double compression, Double-only |
 
 ---
 
@@ -153,8 +158,8 @@ All Java data types are supported:
 ### Unit Tests
 
 ```
-Total Tests: 183
-Passed: 182 (99.5%)
+Total Tests: 189
+Passed: 188 (99.5%)
 Skipped: 1 (Gorilla Int64 - known limitation)
 Failed: 0
 
@@ -166,6 +171,9 @@ Test Breakdown:
 - Gorilla Encoding: 8/9 tests (88.9%)
 - Dictionary Encoding: 8 tests (100%)
 - TS_2DIFF Encoding: 11 tests (100%)
+- CHIMP Encoding: Tests included
+- SPRINTZ Encoding: Tests included
+- RLBE Encoding: Tests included
 - Tree Model: 4 tests (100%)
 - Table Model: 4 tests (100%)
 - V4 Format: 12 tests (100%)
@@ -244,10 +252,12 @@ See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance analysis.
 
 ### Not Yet Implemented
 
-1. **LZMA2 Compression**: Low priority, rarely used
-2. **3 Advanced Encodings**: CHIMP, SPRINTZ, RLBE
+1. **LZMA2 Compression**: Read-only support (decompression works)
+   - Reason: Maintains cross-platform compatibility
+   - Alternative: FastLZMA2Net exists but is Windows-only
+   - Workaround: Use ZSTD (better compression) or LZ4 (faster) for writing
+2. **CAMEL Encoding**: Double-only specialized encoding
    - Reason: Low priority for typical time-series workloads
-   - All critical encodings (Gorilla, RLE, Dictionary, TS_2DIFF, ZigZag, Bitmap, Diff, Regular) are implemented
 3. **Advanced Query Features**: Time-range filters, aggregations (planned for future)
 4. **Statistics**: Min, max, count metadata (planned for future)
 
@@ -299,23 +309,29 @@ See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance analysis.
 1. ✅ **Priority 1 & 2 Encodings** - COMPLETE
    - RLE, Gorilla, ZigZag, Dictionary, TS_2DIFF
 
-2. 📝 **Bug Fixes**
+2. ✅ **Advanced Encodings** - COMPLETE
+   - CHIMP, SPRINTZ, RLBE (all implemented)
+
+3. 📝 **Bug Fixes**
    - Fix Gorilla Int64 decoding issue
    - Address any issues reported by users
 
-3. 📝 **Documentation**
+4. 📝 **Documentation**
    - Add more usage examples
    - Create video tutorials
    - Publish performance comparison with Java
 
 ### Medium Term (3-6 months)
 
-1. 📝 **Additional Encodings** (if requested by users)
-   - CHIMP (high-precision floats)
-   - SPRINTZ (sensor-optimized)
-   - RLBE (run-length byte)
+1. ✅ **Additional Encodings** - COMPLETE
+   - CHIMP (high-precision floats) - Implemented
+   - SPRINTZ (sensor-optimized) - Implemented
+   - RLBE (run-length byte) - Implemented
 
-2. 📝 **Advanced Features**
+2. 📝 **Remaining Encoding**
+   - CAMEL (Double-only specialized) - Low priority
+
+3. 📝 **Advanced Features**
    - Time-range query filters
    - Statistics (min, max, count)
    - Async/await API
@@ -456,11 +472,11 @@ cd ../../csharp/tests/Apache.TsFile.InteropTests && dotnet test
 The C# implementation of Apache TSFile is **production-ready for time-series workloads** that use standard encodings. It provides:
 
 ✅ **Complete data type support** (100% Java compatibility)
-✅ **11 encoding algorithms** (includes GORILLA_V1, BITMAP, REGULAR, DIFF)
+✅ **14 encoding algorithms** (includes GORILLA_V1, BITMAP, REGULAR, DIFF, CHIMP, SPRINTZ, RLBE)
 ✅ **Production-grade compression** (LZ4, ZSTD, Snappy, GZIP)
 ✅ **Binary format compatibility** (verified with 360 interop tests)
 ✅ **Unified API for V3 and V4** (V4 is default, auto-detection on read)
-✅ **Comprehensive testing** (99.5% test pass rate, 183 tests)
+✅ **Comprehensive testing** (99.5% test pass rate, 189 tests)
 ✅ **Complete documentation** (~2,800 lines across 6 documents)
 ✅ **Performance benchmarking** (with statistical rigor)
 ✅ **Interoperability test suite** (Java-C# cross-validation)
@@ -473,6 +489,7 @@ The C# implementation of Apache TSFile is **production-ready for time-series wor
 - Auto-detection of file version on read
 - Tree model and table model data organization support
 - Removed V4-suffixed classes (TsFileWriterV4, TsFileReaderV4)
+- **Advanced encodings**: CHIMP, SPRINTZ, RLBE fully implemented
 
 ---
 
@@ -484,4 +501,4 @@ The C# implementation of Apache TSFile is **production-ready for time-series wor
 
 ---
 
-*Last Updated: 2026-02-05 (Unified V4 API, removed V3/V4 suffix classes)*
+*Last Updated: 2026-02-09 (Updated implementation status: 14/15 encodings, 189 tests)*

@@ -36,7 +36,8 @@ public class PlainEncoder : IEncoder
     
     public void Encode(int value, MemoryStream stream)
     {
-        WriteInt(stream, value);
+        // Java PlainEncoder.encode(int) uses writeVarInt (ZigZag)
+        WriteZigZagVarInt(stream, value);
     }
     
     public void Encode(long value, MemoryStream stream)
@@ -46,24 +47,28 @@ public class PlainEncoder : IEncoder
     
     public void Encode(float value, MemoryStream stream)
     {
-        WriteInt(stream, BitConverter.SingleToInt32Bits(value));
+        // Java PlainEncoder.encode(float) writes 4-byte big-endian
+        WriteIntBigEndian(stream, BitConverter.SingleToInt32Bits(value));
     }
     
     public void Encode(double value, MemoryStream stream)
     {
+        // Java PlainEncoder.encode(double) writes 8-byte big-endian
         WriteLong(stream, BitConverter.DoubleToInt64Bits(value));
     }
     
     public void Encode(string value, MemoryStream stream)
     {
+        // Java PlainEncoder.encode(Binary) calls encode(length) which uses writeVarInt (ZigZag)
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        WriteVarInt(stream, bytes.Length);
+        WriteZigZagVarInt(stream, bytes.Length);
         stream.Write(bytes, 0, bytes.Length);
     }
     
     public void Encode(byte[] value, MemoryStream stream)
     {
-        WriteVarInt(stream, value.Length);
+        // Java PlainEncoder.encode(Binary) calls encode(length) which uses writeVarInt (ZigZag)
+        WriteZigZagVarInt(stream, value.Length);
         stream.Write(value, 0, value.Length);
     }
     
@@ -82,12 +87,12 @@ public class PlainEncoder : IEncoder
         return 0; // No internal buffering
     }
     
-    private static void WriteInt(Stream stream, int value)
+    private static void WriteIntBigEndian(Stream stream, int value)
     {
-        var bytes = BitConverter.GetBytes(value);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-        stream.Write(bytes, 0, 4);
+        stream.WriteByte((byte)((value >> 24) & 0xFF));
+        stream.WriteByte((byte)((value >> 16) & 0xFF));
+        stream.WriteByte((byte)((value >> 8) & 0xFF));
+        stream.WriteByte((byte)(value & 0xFF));
     }
     
     private static void WriteLong(Stream stream, long value)
@@ -98,14 +103,15 @@ public class PlainEncoder : IEncoder
         stream.Write(bytes, 0, 8);
     }
     
-    private static void WriteVarInt(Stream stream, int value)
+    private static void WriteZigZagVarInt(Stream stream, int value)
     {
-        // Variable length integer encoding
-        while ((value & ~0x7F) != 0)
+        // ZigZag encode: (n << 1) ^ (n >> 31)
+        uint n = (uint)((value << 1) ^ (value >> 31));
+        while ((n & ~0x7Fu) != 0)
         {
-            stream.WriteByte((byte)((value & 0x7F) | 0x80));
-            value = (int)((uint)value >> 7);
+            stream.WriteByte((byte)((n & 0x7F) | 0x80));
+            n >>= 7;
         }
-        stream.WriteByte((byte)value);
+        stream.WriteByte((byte)n);
     }
 }

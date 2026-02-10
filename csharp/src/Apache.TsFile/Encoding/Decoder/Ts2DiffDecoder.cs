@@ -5,224 +5,168 @@ using Apache.TsFile.Enums;
 namespace Apache.TsFile.Encoding.Decoder
 {
     /// <summary>
-    /// TS_2DIFF (Two-Differential) decoder for monotonic sequences.
-    /// Reconstructs values from second-order deltas.
+    /// TS_2DIFF (DeltaBinary) decoder matching Java's DeltaBinaryDecoder.
+    /// Uses block-based bit-packing format:
+    ///   [packNum:Int32BE][packWidth:Int32BE][minDeltaBase][firstValue][deltaBuf]
+    /// For Int32/Float: minDeltaBase and firstValue are Int32 big-endian.
+    /// For Int64/Double: minDeltaBase and firstValue are Int64 big-endian.
     /// </summary>
     public class Ts2DiffDecoder : IDecoder
     {
         private readonly TsDataType _dataType;
-        private readonly Queue<long> _values = new();
-        private int _count = 0;
-        private bool _initialized = false;
+        private long[] _data = Array.Empty<long>();
+        private int _readTotalCount;
+        private int _nextReadIndex;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Ts2DiffDecoder"/> class.
-        /// </summary>
-        /// <param name="dataType">The data type (Int32, Int64, Float, Double)</param>
         public Ts2DiffDecoder(TsDataType dataType)
         {
             if (dataType != TsDataType.Int32 && dataType != TsDataType.Int64 &&
                 dataType != TsDataType.Float && dataType != TsDataType.Double)
             {
-                throw new ArgumentException($"TS_2DIFF decoding only supports Int32/Int64/Float/Double, got {dataType}");
+                throw new ArgumentException(
+                    $"TS_2DIFF decoding only supports Int32/Int64/Float/Double, got {dataType}");
             }
             _dataType = dataType;
         }
 
-        public bool ReadBoolean(byte[] data, ref int offset)
-        {
-            throw new NotSupportedException("TS_2DIFF decoding does not support boolean");
-        }
+        public bool ReadBoolean(byte[] data, ref int offset) =>
+            throw new NotSupportedException("TS_2DIFF does not support boolean");
 
         public int ReadInt(byte[] data, ref int offset)
         {
-            EnsureInitialized(data, ref offset);
-            if (_values.Count == 0)
-            {
-                throw new InvalidOperationException("No more values to read");
-            }
-            return (int)_values.Dequeue();
+            if (_nextReadIndex == _readTotalCount)
+                return (int)LoadBatch(data, ref offset);
+            return (int)_data[_nextReadIndex++];
         }
 
         public long ReadLong(byte[] data, ref int offset)
         {
-            EnsureInitialized(data, ref offset);
-            if (_values.Count == 0)
-            {
-                throw new InvalidOperationException("No more values to read");
-            }
-            return _values.Dequeue();
+            if (_nextReadIndex == _readTotalCount)
+                return LoadBatch(data, ref offset);
+            return _data[_nextReadIndex++];
         }
 
         public float ReadFloat(byte[] data, ref int offset)
         {
-            EnsureInitialized(data, ref offset);
-            if (_values.Count == 0)
-            {
-                throw new InvalidOperationException("No more values to read");
-            }
-            int bits = (int)_values.Dequeue();
+            int bits = ReadInt(data, ref offset);
             return BitConverter.Int32BitsToSingle(bits);
         }
 
         public double ReadDouble(byte[] data, ref int offset)
         {
-            EnsureInitialized(data, ref offset);
-            if (_values.Count == 0)
-            {
-                throw new InvalidOperationException("No more values to read");
-            }
-            long bits = _values.Dequeue();
+            long bits = ReadLong(data, ref offset);
             return BitConverter.Int64BitsToDouble(bits);
         }
 
-        public byte[] ReadBytes(byte[] data, ref int offset)
-        {
-            throw new NotSupportedException("TS_2DIFF decoding does not support byte arrays");
-        }
+        public byte[] ReadBytes(byte[] data, ref int offset) =>
+            throw new NotSupportedException("TS_2DIFF does not support byte arrays");
 
-        public string ReadString(byte[] data, ref int offset)
-        {
-            throw new NotSupportedException("TS_2DIFF decoding does not support strings");
-        }
+        public string ReadString(byte[] data, ref int offset) =>
+            throw new NotSupportedException("TS_2DIFF does not support strings");
 
         public bool HasNext(byte[] data, int offset)
         {
-            return _values.Count > 0 || (!_initialized && offset < data.Length);
+            return _nextReadIndex < _readTotalCount || offset < data.Length;
         }
 
         public void Reset()
         {
-            _values.Clear();
-            _count = 0;
-            _initialized = false;
+            _data = Array.Empty<long>();
+            _readTotalCount = 0;
+            _nextReadIndex = 0;
         }
 
-        private void EnsureInitialized(byte[] data, ref int offset)
+        private long LoadBatch(byte[] data, ref int offset)
         {
-            if (_initialized)
-            {
-                return;
-            }
+            // Java format: [packNum:Int32BE][packWidth:Int32BE][header][deltaBuf]
+            int packNum = ReadInt32BigEndian(data, ref offset);
+            int packWidth = ReadInt32BigEndian(data, ref offset);
 
-            _count = ReadVarInt(data, ref offset);
+            long minDeltaBase;
+            long firstValue;
 
-            if (_count == 0)
-            {
-                _initialized = true;
-                return;
-            }
-
-            // Read first value
-            long firstValue = ReadValue(data, ref offset);
-            _values.Enqueue(firstValue);
-
-            if (_count == 1)
-            {
-                _initialized = true;
-                return;
-            }
-
-            // Read first delta
-            long firstDelta = ReadZigZag(data, ref offset);
-            long secondValue = firstValue + firstDelta;
-            _values.Enqueue(secondValue);
-
-            if (_count == 2)
-            {
-                _initialized = true;
-                return;
-            }
-
-            // Reconstruct remaining values from second deltas
-            long previousValue = secondValue;
-            long previousDelta = firstDelta;
-
-            for (int i = 2; i < _count; i++)
-            {
-                long secondDelta = ReadZigZag(data, ref offset);
-                long currentDelta = previousDelta + secondDelta;
-                long currentValue = previousValue + currentDelta;
-                
-                _values.Enqueue(currentValue);
-                
-                previousValue = currentValue;
-                previousDelta = currentDelta;
-            }
-
-            _initialized = true;
-        }
-
-        private long ReadValue(byte[] data, ref int offset)
-        {
             if (_dataType == TsDataType.Int32 || _dataType == TsDataType.Float)
             {
-                // Read as 32-bit
-                int value = data[offset]
-                    | (data[offset + 1] << 8)
-                    | (data[offset + 2] << 16)
-                    | (data[offset + 3] << 24);
-                offset += 4;
-                return value;
+                minDeltaBase = ReadInt32BigEndian(data, ref offset);
+                firstValue = ReadInt32BigEndian(data, ref offset);
             }
             else
             {
-                // Read as 64-bit
-                long value = data[offset]
-                    | ((long)data[offset + 1] << 8)
-                    | ((long)data[offset + 2] << 16)
-                    | ((long)data[offset + 3] << 24)
-                    | ((long)data[offset + 4] << 32)
-                    | ((long)data[offset + 5] << 40)
-                    | ((long)data[offset + 6] << 48)
-                    | ((long)data[offset + 7] << 56);
-                offset += 8;
-                return value;
+                minDeltaBase = ReadInt64BigEndian(data, ref offset);
+                firstValue = ReadInt64BigEndian(data, ref offset);
             }
+
+            int encodingLength = (int)Math.Ceiling((long)packNum * packWidth / 8.0);
+            byte[] deltaBuf = new byte[encodingLength];
+            if (encodingLength > 0)
+                Array.Copy(data, offset, deltaBuf, 0, encodingLength);
+            offset += encodingLength;
+
+            // Reconstruct values AFTER firstValue (matching Java's readPack)
+            _data = new long[packNum];
+            long previous = firstValue;
+            for (int i = 0; i < packNum; i++)
+            {
+                long v = BytesToLong(deltaBuf, (long)packWidth * i, packWidth);
+                long current = previous + minDeltaBase + v;
+                _data[i] = current;
+                previous = current;
+            }
+
+            _readTotalCount = packNum;
+            _nextReadIndex = 0;
+            return firstValue;
         }
 
-        private int ReadVarInt(byte[] data, ref int offset)
+        /// <summary>
+        /// Extract bits from byte array at bit position pos with given bit width.
+        /// Matches Java BytesUtils.bytesToLong(byte[], int pos, int width).
+        /// </summary>
+        private static long BytesToLong(byte[] result, long pos, int width)
         {
-            uint result = 0;
-            int shift = 0;
-
-            while (offset < data.Length)
+            long ret = 0;
+            int cnt = (int)(pos & 0x07);
+            int index = (int)(pos >> 3);
+            while (width > 0)
             {
-                byte b = data[offset++];
-                result |= (uint)(b & 0x7F) << shift;
-
-                if ((b & 0x80) == 0)
+                int m = (width + cnt >= 8) ? (8 - cnt) : width;
+                width -= m;
+                ret <<= m;
+                byte y = (byte)(result[index] & (0xff >> cnt));
+                y = (byte)((y & 0xff) >> (8 - cnt - m));
+                ret |= (y & 0xffL);
+                cnt += m;
+                if (cnt == 8)
                 {
-                    return (int)result;
+                    cnt = 0;
+                    index++;
                 }
-
-                shift += 7;
             }
-
-            throw new InvalidOperationException("Incomplete VarInt in data");
+            return ret;
         }
 
-        private long ReadZigZag(byte[] data, ref int offset)
+        private static int ReadInt32BigEndian(byte[] data, ref int offset)
         {
-            // Read VarInt
-            ulong encoded = 0;
-            int shift = 0;
+            int value = (data[offset] << 24)
+                      | (data[offset + 1] << 16)
+                      | (data[offset + 2] << 8)
+                      | data[offset + 3];
+            offset += 4;
+            return value;
+        }
 
-            while (offset < data.Length)
-            {
-                byte b = data[offset++];
-                encoded |= (ulong)(b & 0x7F) << shift;
-
-                if ((b & 0x80) == 0)
-                {
-                    break;
-                }
-
-                shift += 7;
-            }
-
-            // ZigZag decode: (n >>> 1) ^ -(n & 1)
-            return (long)(encoded >> 1) ^ -(long)(encoded & 1);
+        private static long ReadInt64BigEndian(byte[] data, ref int offset)
+        {
+            long value = ((long)data[offset] << 56)
+                       | ((long)data[offset + 1] << 48)
+                       | ((long)data[offset + 2] << 40)
+                       | ((long)data[offset + 3] << 32)
+                       | ((long)data[offset + 4] << 24)
+                       | ((long)data[offset + 5] << 16)
+                       | ((long)data[offset + 6] << 8)
+                       | data[offset + 7];
+            offset += 8;
+            return value;
         }
     }
 }

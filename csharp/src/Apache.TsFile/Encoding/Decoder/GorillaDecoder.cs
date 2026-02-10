@@ -116,122 +116,143 @@ public class GorillaDecoder : IDecoder
         
         if (_bitReader == null)
         {
-            // Read length
-            int length = ReadInt32(buffer, ref offset);
-            
-            // Read bit width (though we already have it from constructor)
-            int storedBitWidth = buffer[offset++];
-            
-            // Read encoded data
-            byte[] encodedData = new byte[length];
-            Array.Copy(buffer, offset, encodedData, 0, length);
-            offset += length;
+            // Java GorillaEncoderV2 writes raw bit-packed data with no length prefix.
+            // The entire remaining buffer is the encoded data.
+            byte[] encodedData = new byte[buffer.Length - offset];
+            Array.Copy(buffer, offset, encodedData, 0, encodedData.Length);
+            offset = buffer.Length; // consume all remaining bytes
             
             _bitReader = new BitReader(encodedData);
             _first = true;
+            _previousLeadingZeros = int.MaxValue;
+            _previousTrailingZeros = 0;
         }
         
-        // Decode one value at a time
-        if (_bitReader.HasNext())
+        // Decode all values at once (until ending marker)
+        DecodeAll();
+    }
+    
+    private void DecodeAll()
+    {
+        // Java Gorilla V2 uses a read-ahead pattern:
+        // readInt() returns the cached storedValue, then pre-reads the next value via cacheNext().
+        // The ending marker (Integer.MIN_VALUE / Long.MIN_VALUE) is detected in cacheNext()
+        // and is never returned to the caller.
+        
+        int leadingZeroBits = _bitWidth == 32 ? 5 : 6;
+        int meaningfulBitsField = _bitWidth == 32 ? 5 : 6;
+        
+        try
         {
-            try
+            // Read first value (full bit width)
+            long storedValue = _bitReader!.ReadBits(_bitWidth);
+            
+            // Pre-read next value (Java read-ahead: cacheNext)
+            long nextValue = ReadNextValue(storedValue, leadingZeroBits, meaningfulBitsField);
+            bool hasMore = !IsEndingMarker(nextValue);
+            
+            // Enqueue first value
+            EnqueueValue(storedValue);
+            storedValue = nextValue;
+            
+            while (hasMore)
             {
-                long decoded = DecodeValue();
+                nextValue = ReadNextValue(storedValue, leadingZeroBits, meaningfulBitsField);
+                hasMore = !IsEndingMarker(nextValue);
                 
-                // Queue the decoded value based on data type
-                switch (_dataType)
-                {
-                    case TsDataType.Float:
-                        _floatQueue.Enqueue(BitConverter.Int32BitsToSingle((int)decoded));
-                        break;
-                    case TsDataType.Double:
-                        _doubleQueue.Enqueue(BitConverter.Int64BitsToDouble(decoded));
-                        break;
-                    case TsDataType.Int32:
-                        _intQueue.Enqueue((int)decoded);
-                        break;
-                    case TsDataType.Int64:
-                    case TsDataType.Timestamp:
-                        _longQueue.Enqueue(decoded);
-                        break;
-                }
+                EnqueueValue(storedValue);
+                storedValue = nextValue;
             }
-            catch (InvalidOperationException)
+        }
+        catch
+        {
+            // End of stream — no more bits to read
+        }
+    }
+    
+    private long ReadNextValue(long currentValue, int leadingZeroBits, int meaningfulBitsField)
+    {
+        // Java readNextClearBit(2): reads up to 2 bits, stops at first 0-bit
+        // Returns: 0 (read '0'), 2 (read '10'), 3 (read '11')
+        byte controlBits = ReadNextClearBit(2);
+        
+        switch (controlBits)
+        {
+            case 3: // '11': new leading and trailing zeros
             {
-                // No more bits to read
+                _previousLeadingZeros = (int)_bitReader!.ReadBits(leadingZeroBits);
+                int significantBits = (int)_bitReader.ReadBits(meaningfulBitsField) + 1;
+                _previousTrailingZeros = _bitWidth - significantBits - _previousLeadingZeros;
+                // Fall through to case 2
+                goto case 2;
+            }
+            case 2: // '10': use stored leading and trailing zeros
+            {
+                int meaningfulBits = _bitWidth - _previousLeadingZeros - _previousTrailingZeros;
+                long xor = _bitReader!.ReadBits(meaningfulBits);
+                xor <<= _previousTrailingZeros;
+                _previousValue = currentValue ^ xor;
+                return _previousValue;
+            }
+            default: // '0': value unchanged
+            {
+                _previousValue = currentValue;
+                return currentValue;
             }
         }
     }
     
-    private long DecodeValue()
+    /// <summary>
+    /// Reads up to maxBits bits, stopping at the first 0-bit.
+    /// Returns the accumulated value. Matches Java's readNextClearBit.
+    /// </summary>
+    private byte ReadNextClearBit(int maxBits)
     {
-        if (_first)
+        byte value = 0;
+        for (int i = 0; i < maxBits; i++)
         {
-            // First value: read full width
-            _previousValue = _bitReader!.ReadBits(_bitWidth);
-            _first = false;
-            return _previousValue;
-        }
-        
-        // Read control bit
-        int controlBit = _bitReader!.ReadBit();
-        
-        if (controlBit == 0)
-        {
-            // Value same as previous
-            return _previousValue;
-        }
-        
-        // Read second control bit
-        int blockBit = _bitReader.ReadBit();
-        
-        long xor;
-        if (blockBit == 0)
-        {
-            // Use previous block info
-            int meaningfulBits = _bitWidth - _previousLeadingZeros - _previousTrailingZeros;
-            long meaningfulValue = _bitReader.ReadBits(meaningfulBits);
-            xor = meaningfulValue << _previousTrailingZeros;
-        }
-        else
-        {
-            // New block
-            int leadingZeros = (int)_bitReader.ReadBits(5);
-            int meaningfulBits = (int)_bitReader.ReadBits(6);
-            
-            int trailingZeros = _bitWidth - leadingZeros - meaningfulBits;
-            
-            // Safety check
-            if (meaningfulBits < 0 || meaningfulBits > _bitWidth || trailingZeros < 0)
+            value <<= 1;
+            if (_bitReader!.ReadBit() == 1)
             {
-                throw new InvalidOperationException($"Invalid Gorilla encoding: leadingZeros={leadingZeros}, meaningfulBits={meaningfulBits}, bitWidth={_bitWidth}");
+                value |= 1;
             }
-            
-            long meaningfulValue = meaningfulBits > 0 ? _bitReader.ReadBits(meaningfulBits) : 0;
-            xor = meaningfulValue << trailingZeros;
-            
-            _previousLeadingZeros = leadingZeros;
-            _previousTrailingZeros = trailingZeros;
+            else
+            {
+                break;
+            }
         }
-        
-        // XOR with previous to get actual value
-        _previousValue = _previousValue ^ xor;
-        return _previousValue;
+        return value;
+    }
+    
+    private void EnqueueValue(long value)
+    {
+        switch (_dataType)
+        {
+            case TsDataType.Float:
+                _floatQueue.Enqueue(BitConverter.Int32BitsToSingle((int)value));
+                break;
+            case TsDataType.Double:
+                _doubleQueue.Enqueue(BitConverter.Int64BitsToDouble(value));
+                break;
+            case TsDataType.Int32:
+                _intQueue.Enqueue((int)value);
+                break;
+            case TsDataType.Int64:
+            case TsDataType.Timestamp:
+                _longQueue.Enqueue(value);
+                break;
+        }
+    }
+    
+    private bool IsEndingMarker(long value)
+    {
+        if (_bitWidth == 32) return (int)value == int.MinValue;
+        return value == long.MinValue;
     }
     
     private bool HasData()
     {
         return _floatQueue.Count > 0 || _doubleQueue.Count > 0 || 
                _intQueue.Count > 0 || _longQueue.Count > 0;
-    }
-    
-    private static int ReadInt32(byte[] buffer, ref int offset)
-    {
-        var bytes = new byte[4];
-        Array.Copy(buffer, offset, bytes, 0, 4);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-        offset += 4;
-        return BitConverter.ToInt32(bytes, 0);
     }
 }

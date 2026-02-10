@@ -43,3 +43,6 @@ cpp/third_party/zlib-1.2.13/zconf.h
 .vscode/
 
 build/*
+.omc
+.specify
+.claude

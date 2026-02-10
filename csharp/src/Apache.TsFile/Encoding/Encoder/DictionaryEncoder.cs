@@ -84,23 +84,24 @@ namespace Apache.TsFile.Encoding.Encoder
 
         public void Flush(MemoryStream stream)
         {
-            // Write dictionary
-            WriteVarInt(stream, _dictionary.Count);
+            // Write dictionary map using ZigZag VarInt (matching Java writeVarInt)
+            WriteZigZagVarInt(stream, _dictionary.Count);
             
             // Sort by index to maintain order
             foreach (var kvp in _dictionary.OrderBy(x => x.Value))
             {
                 var bytes = System.Text.Encoding.UTF8.GetBytes(kvp.Key);
-                WriteVarInt(stream, bytes.Length);
+                WriteZigZagVarInt(stream, bytes.Length);
                 stream.Write(bytes, 0, bytes.Length);
             }
             
-            // Write indices
-            WriteVarInt(stream, _indices.Count);
+            // Write indices using RLE encoder (matching Java IntRleEncoder)
+            var rleEncoder = new RleEncoder(TsDataType.Int32);
             foreach (var index in _indices)
             {
-                WriteVarInt(stream, index);
+                rleEncoder.Encode(index, stream);
             }
+            rleEncoder.Flush(stream);
             
             // Clear for next batch
             _dictionary.Clear();
@@ -124,15 +125,16 @@ namespace Apache.TsFile.Encoding.Encoder
             return dictionaryOverhead + stringDataSize + indicesSize + 5; // +5 for value count
         }
 
-        private void WriteVarInt(Stream stream, int value)
+        private void WriteZigZagVarInt(Stream stream, int value)
         {
-            uint uvalue = (uint)value;
-            while (uvalue >= 0x80)
+            // ZigZag encode: (n << 1) ^ (n >> 31)
+            uint n = (uint)((value << 1) ^ (value >> 31));
+            while (n >= 0x80)
             {
-                stream.WriteByte((byte)(uvalue | 0x80));
-                uvalue >>= 7;
+                stream.WriteByte((byte)(n | 0x80));
+                n >>= 7;
             }
-            stream.WriteByte((byte)uvalue);
+            stream.WriteByte((byte)n);
         }
     }
 }

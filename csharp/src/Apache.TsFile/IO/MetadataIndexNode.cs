@@ -148,17 +148,18 @@ public class MetadataIndexNode
     /// <summary>
     /// Deserializes a metadata index node from a binary stream (V4 format).
     /// </summary>
-    public static MetadataIndexNode DeserializeV4(BinaryReader reader, bool isDeviceLevel, 
-        Func<int> readVarInt, Func<string> readVarIntString, Func<long> readLong)
+    public static MetadataIndexNode DeserializeV4(BinaryReader reader, bool isDeviceLevel,
+        Func<int> readUnsignedVarInt, Func<string> readVarIntString, Func<long> readLong)
     {
         var entries = new List<IMetadataIndexEntry>();
-        int size = readVarInt();
-        
+        // NOTE: Java uses readUnsignedVarInt for entry count (no ZigZag)
+        int size = readUnsignedVarInt();
+
         for (int i = 0; i < size; i++)
         {
             if (isDeviceLevel)
             {
-                var entry = DeviceMetadataIndexEntry.Deserialize(reader, readVarInt, readVarIntString, readLong);
+                var entry = DeviceMetadataIndexEntry.Deserialize(reader, readUnsignedVarInt, readVarIntString, readLong);
                 entries.Add(entry);
             }
             else
@@ -167,10 +168,10 @@ public class MetadataIndexNode
                 entries.Add(entry);
             }
         }
-        
+
         var endOffset = readLong();
         var nodeType = (MetadataIndexNodeType)reader.ReadByte();
-        
+
         return new MetadataIndexNode(entries, endOffset, nodeType);
     }
     

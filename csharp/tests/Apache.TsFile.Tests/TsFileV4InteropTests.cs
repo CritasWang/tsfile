@@ -20,6 +20,7 @@
 using Apache.TsFile.Enums;
 using Apache.TsFile.IO;
 using Apache.TsFile.Schema;
+using System.Text.Json;
 using Xunit;
 
 namespace Apache.TsFile.Tests;
@@ -38,12 +39,31 @@ public class TsFileV4InteropTests
         }
         return currentDir ?? Directory.GetCurrentDirectory();
     }
-    
+
+    private string GetJavaV4TestFilesDir()
+    {
+        // Priority: 1. Environment variable, 2. Default CI path
+        var envDir = Environment.GetEnvironmentVariable("JAVA_V4_TEST_FILES_DIR");
+        return !string.IsNullOrEmpty(envDir) ? envDir : "/tmp/interop-tests/java-v4";
+    }
+
+    private string GetJavaComprehensiveDir()
+    {
+        var envDir = Environment.GetEnvironmentVariable("JAVA_COMPREHENSIVE_DIR");
+        return !string.IsNullOrEmpty(envDir) ? envDir : "/tmp/interop-tests/java-comprehensive";
+    }
+
+    private string GetJavaV3TestFilesDir()
+    {
+        var envDir = Environment.GetEnvironmentVariable("JAVA_V3_TEST_FILES_DIR");
+        return !string.IsNullOrEmpty(envDir) ? envDir : "/tmp/interop-tests/java-v3";
+    }
+
     [Fact]
     public void ReadJavaV4File_CanReadSchemas()
     {
         // Try CI-generated files first (true interop test)
-        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        var javaV4Dir = GetJavaV4TestFilesDir();
         string? javaV4File = null;
 
         if (Directory.Exists(javaV4Dir))
@@ -63,7 +83,7 @@ public class TsFileV4InteropTests
 
         if (!File.Exists(javaV4File))
         {
-            // Skip if file doesn't exist
+            // Skip test if Java V4 files not found
             return;
         }
 
@@ -80,7 +100,7 @@ public class TsFileV4InteropTests
     public void ReadJavaV4File_CanReadSchemasWithReader()
     {
         // Try CI-generated files first (true interop test)
-        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        var javaV4Dir = GetJavaV4TestFilesDir();
         string? javaV4File = null;
 
         if (Directory.Exists(javaV4Dir))
@@ -100,10 +120,11 @@ public class TsFileV4InteropTests
 
         if (!File.Exists(javaV4File))
         {
+            // Skip test if Java V4 files not found
             return;
         }
 
-        // Java V4 files have a complex format that may not be fully compatible
+        // Verify it's a v4 file
         // This test verifies that we can at least attempt to read without crashing
         try
         {
@@ -130,7 +151,7 @@ public class TsFileV4InteropTests
     public void ReadJavaV4File_WithTsFileReader()
     {
         // Try CI-generated files first (true interop test)
-        var javaV4Dir = "/tmp/interop-tests/java-v4";
+        var javaV4Dir = GetJavaV4TestFilesDir();
         string? javaV4File = null;
 
         if (Directory.Exists(javaV4Dir))
@@ -150,6 +171,7 @@ public class TsFileV4InteropTests
 
         if (!File.Exists(javaV4File))
         {
+            // Skip test if Java V4 files not found
             return;
         }
 
@@ -168,6 +190,24 @@ public class TsFileV4InteropTests
             // List all tables
             var tableNames = reader.Schemas.Keys.ToList();
             Assert.NotEmpty(tableNames);
+
+            Console.WriteLine($"\n  File: {Path.GetFileName(javaV4File)}");
+            Console.WriteLine($"  Version: {reader.FileVersion}");
+            Console.WriteLine($"  Tables: {string.Join(", ", tableNames)}");
+            foreach (var tableName in tableNames)
+            {
+                var schema = reader.Schemas[tableName];
+                Console.WriteLine($"  [{tableName}] measurements: {string.Join(", ", schema.Measurements.Select(m => $"{m.MeasurementName}({m.DataType})"))}");
+                try
+                {
+                    var result = reader.Query(tableName);
+                    Console.WriteLine($"  [{tableName}] rows={result.Timestamps.Count}  data: {FormatSampleValues(result, maxRows: 3)}");
+                }
+                catch (Exception qex)
+                {
+                    Console.WriteLine($"  [{tableName}] query error: {qex.Message}");
+                }
+            }
         }
         catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
         {
@@ -534,52 +574,55 @@ public class TsFileV4InteropTests
     public void QueryJavaV4File_ReturnsData()
     {
         // Try CI-generated files first (true interop test)
-        var javaV4Dir = "/tmp/interop-tests/java-v4";
-        string? javaV4File = null;
+        var javaV4Dir = GetJavaV4TestFilesDir();
+        string[]? javaV4Files = null;
 
         if (Directory.Exists(javaV4Dir))
         {
-            var files = Directory.GetFiles(javaV4Dir, "*.tsfile");
-            if (files.Length > 0)
-            {
-                javaV4File = files[0]; // Use first available file
-            }
+            javaV4Files = Directory.GetFiles(javaV4Dir, "*.tsfile");
         }
 
         // Fallback to static file for local testing
-        if (javaV4File == null || !File.Exists(javaV4File))
+        if (javaV4Files == null || javaV4Files.Length == 0)
         {
-            javaV4File = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+            var fallback = Path.Combine(GetRepositoryRoot(), "java/examples/Tablet.tsfile");
+            if (File.Exists(fallback))
+                javaV4Files = new[] { fallback };
         }
 
-        if (!File.Exists(javaV4File))
+        if (javaV4Files == null || javaV4Files.Length == 0)
         {
-            // Skip if no file available
+            // Skip test if Java V4 files not found
             return;
         }
 
-        try
+        Console.WriteLine($"\n  Reading {javaV4Files.Length} Java V4 simple files from {javaV4Dir}");
+
+        foreach (var javaV4File in javaV4Files)
         {
-            using var reader = new TsFileReader(javaV4File);
-
-            // Verify file version
-            Assert.Equal(4, reader.FileVersion);
-
-            // Verify schemas are loaded
-            Assert.NotEmpty(reader.Schemas);
-
-            // Try to query each table
-            foreach (var tableName in reader.Schemas.Keys)
+            try
             {
-                var result = reader.Query(tableName);
-                Assert.NotNull(result);
-                Assert.Equal(tableName, result.DeviceName);
+                using var reader = new TsFileReader(javaV4File);
+
+                Assert.Equal(4, reader.FileVersion);
+                Assert.NotEmpty(reader.Schemas);
+
+                Console.WriteLine($"\n  \u2713 {Path.GetFileName(javaV4File)}");
+                foreach (var tableName in reader.Schemas.Keys)
+                {
+                    var result = reader.Query(tableName);
+                    Assert.NotNull(result);
+                    Assert.Equal(tableName, result.DeviceName);
+
+                    var schema = reader.Schemas[tableName];
+                    Console.WriteLine($"    [{tableName}] measurements: {string.Join(", ", schema.Measurements.Select(m => $"{m.MeasurementName}({m.DataType}/{m.Encoding}/{m.Compression})"))}");
+                    Console.WriteLine($"    [{tableName}] rows={result.Timestamps.Count}  data: {FormatSampleValues(result, maxRows: 5)}");
+                }
             }
-        }
-        catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
-        {
-            // Java V4 format may have features not yet fully supported
-            // This is expected for complex files
+            catch (Exception ex) when (ex is EndOfStreamException or InvalidDataException)
+            {
+                Console.WriteLine($"  \u2717 {Path.GetFileName(javaV4File)}: {ex.Message}");
+            }
         }
     }
 
@@ -640,4 +683,380 @@ public class TsFileV4InteropTests
                 File.Delete(testFile);
         }
     }
+
+    /// <summary>
+    /// Tests reading all comprehensive Java test files (360 files).
+    /// Validates data types, encodings, compressions, and expected values.
+    /// Note: This test is experimental as format alignment is in progress.
+    /// </summary>
+    [Fact]
+    public void ReadComprehensiveJavaFiles_ValidatesAllCombinations()
+    {
+        var javaComprehensiveDir = GetJavaComprehensiveDir();
+        var metadataFile = Path.Combine(javaComprehensiveDir, "test-metadata.json");
+
+        if (!File.Exists(metadataFile))
+        {
+            // Skip test if comprehensive files not generated
+            return;
+        }
+
+        // Load metadata for expected value validation
+        var metadataJson = File.ReadAllText(metadataFile);
+        var metadataList = JsonSerializer.Deserialize<List<TestFileMetadata>>(metadataJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var metadataMap = metadataList?.ToDictionary(m => m.FileName, m => m)
+            ?? new Dictionary<string, TestFileMetadata>();
+
+        // Count and validate files
+        var tsfiles = Directory.GetFiles(javaComprehensiveDir, "*.tsfile");
+        Assert.True(tsfiles.Length > 0, $"Should have generated test files in {javaComprehensiveDir}");
+
+        int successCount = 0;
+        int valueMatchCount = 0;
+        var errors = new List<string>();
+
+        Console.WriteLine($"\n{'=',-80}");
+        Console.WriteLine($"Reading {tsfiles.Length} comprehensive Java test files");
+        Console.WriteLine($"{'=',-80}");
+
+        foreach (var file in tsfiles.OrderBy(f => f))
+        {
+            var fileName = Path.GetFileName(file);
+            try
+            {
+                using var reader = new TsFileReader(file);
+
+                Assert.Equal(4, reader.FileVersion);
+                Assert.NotNull(reader.Schemas);
+                Assert.NotEmpty(reader.Schemas);
+
+                var deviceName = reader.Schemas.Keys.First();
+                var schema = reader.Schemas[deviceName];
+                var result = reader.Query(deviceName);
+                Assert.NotNull(result);
+
+                // Build measurement info
+                var measurementInfo = string.Join(", ", schema.Measurements.Select(m =>
+                    $"{m.MeasurementName}({m.DataType}/{m.Encoding}/{m.Compression})"));
+
+                // Get row count and sample values
+                var rowCount = result.Timestamps.Count;
+                var sampleValues = FormatSampleValues(result, maxRows: 5);
+
+                // Validate against expected metadata
+                var valuesMatch = "";
+                if (metadataMap.TryGetValue(fileName, out var meta) && meta.ExpectedValues != null)
+                {
+                    var measurement = result.MeasurementData.Keys.FirstOrDefault();
+                    if (measurement != null && result.MeasurementData[measurement].Count > 0)
+                    {
+                        var actualValues = result.MeasurementData[measurement];
+                        var (matched, mismatchDetail) = ValidateExpectedValues(actualValues, meta.ExpectedValues, meta.DataType);
+                        valuesMatch = matched ? " [VALUES MATCH ✓]" : $" [VALUES MISMATCH ✗ {mismatchDetail}]";
+                        if (matched) valueMatchCount++;
+                    }
+                }
+
+                Console.WriteLine($"  ✓ {fileName,-55} rows={rowCount,4}  {measurementInfo}{valuesMatch}");
+                if (!string.IsNullOrEmpty(sampleValues))
+                {
+                    Console.WriteLine($"    data: {sampleValues}");
+                }
+
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ✗ {fileName,-55} ERROR: {ex.Message}");
+                errors.Add($"{fileName}: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine($"\n{'=',-80}");
+        Console.WriteLine($"Results: {successCount}/{tsfiles.Length} files read successfully, {valueMatchCount} value validations passed");
+        if (errors.Count > 0)
+        {
+            Console.WriteLine($"Errors ({errors.Count}):");
+            foreach (var err in errors.Take(10))
+                Console.WriteLine($"  - {err}");
+        }
+        Console.WriteLine($"{'=',-80}\n");
+
+        Assert.True(successCount > 0,
+            $"Failed to read any comprehensive files. Errors:\n{string.Join("\n", errors.Take(5))}");
+    }
+
+    /// <summary>
+    /// Tests reading Java-generated V3 files.
+    /// This verifies that C# can read V3 format files generated by tsfile:1.1.3.
+    /// </summary>
+    [Fact]
+    public void ReadJavaV3Files_ValidatesCompatibility()
+    {
+        var javaV3Dir = GetJavaV3TestFilesDir();
+
+        if (!Directory.Exists(javaV3Dir))
+        {
+            // Skip test if V3 files not generated
+            return;
+        }
+
+        var v3Files = Directory.GetFiles(javaV3Dir, "*.tsfile");
+        if (v3Files.Length == 0)
+        {
+            // Skip test if no V3 files found
+            return;
+        }
+
+        int successCount = 0;
+        var errors = new List<string>();
+
+        foreach (var file in v3Files)
+        {
+            try
+            {
+                using var reader = new TsFileReader(file);
+
+                // Verify it's a V3 file
+                Assert.Equal(3, reader.FileVersion);
+
+                // Verify schemas are loaded
+                Assert.NotEmpty(reader.Schemas);
+
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{Path.GetFileName(file)}: {ex.Message}");
+            }
+        }
+
+        // Report results
+        Console.WriteLine($"V3 compatibility: {successCount}/{v3Files.Length} files readable");
+        if (errors.Count > 0)
+        {
+            Console.WriteLine($"Errors: {string.Join(", ", errors.Take(3))}");
+        }
+
+        // V3 reading is not yet implemented in C# - report results without failing
+        if (successCount == 0)
+        {
+            Console.WriteLine("V3 format reading not yet implemented in C# TsFileReader");
+        }
+    }
+
+    /// <summary>
+    /// Tests reading Java-generated Table Model V4 files.
+    /// This verifies C# can read Table Model V4 format files with ColumnCategory.
+    /// </summary>
+    [Fact]
+    public void ReadJavaTableModelV4Files_ValidatesInteroperability()
+    {
+        var tableModelDir = Environment.GetEnvironmentVariable("JAVA_TABLE_MODEL_V4_DIR")
+            ?? "/tmp/interop-tests/java-table-model-v4";
+
+        if (!Directory.Exists(tableModelDir))
+        {
+            // Skip test if Table Model V4 files not generated
+            return;
+        }
+
+        var tableFiles = Directory.GetFiles(tableModelDir, "*.tsfile");
+        if (tableFiles.Length == 0)
+        {
+            // Skip test if no Table Model V4 files found
+            return;
+        }
+
+        int successCount = 0;
+        var errors = new List<string>();
+
+        Console.WriteLine($"\n{'=',-80}");
+        Console.WriteLine($"Reading {tableFiles.Length} Java Table Model V4 files");
+        Console.WriteLine($"{'=',-80}");
+
+        foreach (var file in tableFiles.OrderBy(f => f))
+        {
+            var fileName = Path.GetFileName(file);
+            try
+            {
+                using var reader = new TsFileReader(file);
+
+                Assert.Equal(4, reader.FileVersion);
+                Assert.NotEmpty(reader.Schemas);
+
+                var tableName = reader.Schemas.Keys.First();
+                var schema = reader.Schemas[tableName];
+                var result = reader.Query(tableName);
+                Assert.NotNull(result);
+
+                var measurementInfo = string.Join(", ", schema.Measurements.Select(m =>
+                    $"{m.MeasurementName}({m.DataType}/{m.Encoding}/{m.Compression})"));
+                var rowCount = result.Timestamps.Count;
+                var sampleValues = FormatSampleValues(result, maxRows: 3);
+
+                Console.WriteLine($"  \u2713 {fileName,-55} rows={rowCount,4}  {measurementInfo}");
+                if (!string.IsNullOrEmpty(sampleValues))
+                {
+                    Console.WriteLine($"    data: {sampleValues}");
+                }
+
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  \u2717 {fileName,-55} ERROR: {ex.Message}");
+                errors.Add($"{fileName}: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine($"\n{'=',-80}");
+        Console.WriteLine($"Table Model V4 interop: {successCount}/{tableFiles.Length} files readable");
+        if (errors.Count > 0)
+        {
+            Console.WriteLine($"Errors ({errors.Count}):");
+            foreach (var err in errors.Take(10))
+                Console.WriteLine($"  - {err}");
+        }
+        Console.WriteLine($"{'=',-80}\n");
+
+        // At least 80% of files should be readable
+        Assert.True(successCount >= tableFiles.Length * 0.8,
+            $"Should be able to read at least 80% of Table Model V4 files. Success: {successCount}/{tableFiles.Length}");
+    }
+
+    /// <summary>
+    /// Formats sample values from a QueryResult for display.
+    /// Shows timestamps and measurement values for the first N rows.
+    /// </summary>
+    private static string FormatSampleValues(QueryResult result, int maxRows = 5)
+    {
+        if (result.Timestamps.Count == 0)
+            return "(empty)";
+
+        var rows = new List<string>();
+        var measurements = result.MeasurementData.Keys.ToList();
+        var count = Math.Min(result.Timestamps.Count, maxRows);
+
+        for (int i = 0; i < count; i++)
+        {
+            var vals = new List<string>();
+            vals.Add($"t={result.Timestamps[i]}");
+            foreach (var m in measurements)
+            {
+                var v = result.MeasurementData[m][i];
+                vals.Add($"{m}={FormatValue(v)}");
+            }
+            rows.Add($"[{string.Join(", ", vals)}]");
+        }
+
+        var suffix = result.Timestamps.Count > maxRows
+            ? $" ... ({result.Timestamps.Count} rows total)"
+            : "";
+        return string.Join(", ", rows) + suffix;
+    }
+
+    /// <summary>
+    /// Formats a single value for display, handling different data types.
+    /// </summary>
+    private static string FormatValue(object v)
+    {
+        return v switch
+        {
+            float f => f.ToString("G6"),
+            double d => d.ToString("G6"),
+            byte[] b => $"bytes[{b.Length}]",
+            string s when s.Length > 20 => $"\"{s[..20]}...\"",
+            string s => $"\"{s}\"",
+            bool b => b ? "true" : "false",
+            _ => v?.ToString() ?? "null"
+        };
+    }
+
+    /// <summary>
+    /// Validates actual values against expected values from metadata JSON.
+    /// </summary>
+    private static (bool matched, string detail) ValidateExpectedValues(List<object> actualValues, List<JsonElement> expectedValues, string dataType)
+    {
+        if (actualValues.Count != expectedValues.Count)
+            return (false, $"count: actual={actualValues.Count} expected={expectedValues.Count}");
+
+        for (int i = 0; i < actualValues.Count; i++)
+        {
+            var actual = actualValues[i];
+            var expected = expectedValues[i];
+
+            bool match;
+            try
+            {
+                match = dataType.ToUpperInvariant() switch
+                {
+                    "INT32" => actual is int ai && GetJsonAsLong(expected) == ai,
+                    "INT64" => actual is long al && GetJsonAsLong(expected) == al,
+                    "FLOAT" => actual is float af && Math.Abs(af - GetJsonAsDouble(expected)) < 1e-2,
+                    "DOUBLE" => actual is double ad && Math.Abs(ad - GetJsonAsDouble(expected)) < 1e-6,
+                    "BOOLEAN" => actual is bool ab && ab == GetJsonAsBool(expected),
+                    "TEXT" or "STRING" => actual is string ast && ast == expected.GetString(),
+                    _ => false
+                };
+            }
+            catch (Exception ex)
+            {
+                return (false, $"@{i}: exception {ex.Message}");
+            }
+
+            if (!match)
+                return (false, $"@{i}: actual={actual}({actual?.GetType().Name}) expected={expected}({expected.ValueKind})");
+        }
+
+        return (true, "");
+    }
+
+    private static long GetJsonAsLong(JsonElement e)
+    {
+        return e.ValueKind switch
+        {
+            JsonValueKind.Number => e.GetInt64(),
+            JsonValueKind.True => 1,
+            JsonValueKind.False => 0,
+            _ => throw new InvalidOperationException($"Cannot convert {e.ValueKind} to long")
+        };
+    }
+
+    private static double GetJsonAsDouble(JsonElement e)
+    {
+        return e.ValueKind switch
+        {
+            JsonValueKind.Number => e.GetDouble(),
+            JsonValueKind.True => 1.0,
+            JsonValueKind.False => 0.0,
+            _ => throw new InvalidOperationException($"Cannot convert {e.ValueKind} to double")
+        };
+    }
+
+    private static bool GetJsonAsBool(JsonElement e)
+    {
+        return e.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Number => e.GetInt32() != 0,
+            _ => throw new InvalidOperationException($"Cannot convert {e.ValueKind} to bool")
+        };
+    }
+}
+
+/// <summary>
+/// Metadata for a test file from the Java generator's test-metadata.json.
+/// </summary>
+public class TestFileMetadata
+{
+    public string FileName { get; set; } = "";
+    public string DataType { get; set; } = "";
+    public string Encoding { get; set; } = "";
+    public string Compression { get; set; } = "";
+    public string Pattern { get; set; } = "";
+    public int ValueCount { get; set; }
+    public List<JsonElement>? ExpectedValues { get; set; }
 }

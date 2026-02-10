@@ -125,8 +125,8 @@ public class RleEncoder : IEncoder
         
         EncodeIntRuns(buffer, values, bitWidth);
         
-        // Write length and data
-        WriteInt(stream, (int)buffer.Length);
+        // Write length (unsignedVarInt) and data - matches Java format
+        WriteUnsignedVarInt(stream, (int)buffer.Length);
         buffer.Position = 0;
         buffer.CopyTo(stream);
     }
@@ -142,7 +142,7 @@ public class RleEncoder : IEncoder
         
         EncodeLongRuns(buffer, values, bitWidth);
         
-        WriteInt(stream, (int)buffer.Length);
+        WriteUnsignedVarInt(stream, (int)buffer.Length);
         buffer.Position = 0;
         buffer.CopyTo(stream);
     }
@@ -291,38 +291,107 @@ public class RleEncoder : IEncoder
     
     private void PackInts(MemoryStream stream, List<int> values, int bitWidth)
     {
-        int byteWidth = (bitWidth + 7) / 8;
-        var packed = new byte[byteWidth * BitPackedGroupSize];
+        // Java IntPacker format: big-endian bit packing
+        // Values are packed MSB-first into a 32-bit buffer, written as big-endian bytes
+        // Each group of 8 values always occupies exactly bitWidth bytes
+        if (bitWidth == 0) return;
         
-        for (int i = 0; i < values.Count; i++)
+        // Pad to 8 values (Java always packs 8)
+        var padded = new int[8];
+        for (int i = 0; i < Math.Min(values.Count, 8); i++)
+            padded[i] = values[i];
+        
+        var packed = new byte[bitWidth];
+        int bufIdx = 0;
+        int valueIdx = 0;
+        int leftBit = 0;
+        
+        while (valueIdx < 8)
         {
-            var valueBytes = BitConverter.GetBytes(values[i]);
-            if (BitConverter.IsLittleEndian)
-                Array.Reverse(valueBytes);
+            int buffer = 0;
+            int leftSize = 32;
             
-            int offset = i * byteWidth;
-            Array.Copy(valueBytes, 4 - byteWidth, packed, offset, Math.Min(byteWidth, valueBytes.Length - (4 - byteWidth)));
+            if (leftBit > 0)
+            {
+                buffer |= (padded[valueIdx] << (32 - leftBit));
+                leftSize -= leftBit;
+                leftBit = 0;
+                valueIdx++;
+            }
+            
+            while (leftSize >= bitWidth && valueIdx < 8)
+            {
+                buffer |= (padded[valueIdx] << (leftSize - bitWidth));
+                leftSize -= bitWidth;
+                valueIdx++;
+            }
+            
+            if (leftSize > 0 && valueIdx < 8)
+            {
+                buffer |= (int)((uint)padded[valueIdx] >> (bitWidth - leftSize));
+                leftBit = bitWidth - leftSize;
+            }
+            
+            for (int j = 0; j < 4; j++)
+            {
+                packed[bufIdx] = (byte)((buffer >> ((3 - j) * 8)) & 0xFF);
+                bufIdx++;
+                if (bufIdx >= bitWidth) goto done;
+            }
         }
-        
-        stream.Write(packed, 0, byteWidth * values.Count);
+        done:
+        stream.Write(packed, 0, bitWidth);
     }
     
     private void PackLongs(MemoryStream stream, List<long> values, int bitWidth)
     {
-        int byteWidth = (bitWidth + 7) / 8;
-        var packed = new byte[byteWidth * BitPackedGroupSize];
+        // Java LongPacker format: big-endian bit packing (same as IntPacker but 64-bit)
+        if (bitWidth == 0) return;
         
-        for (int i = 0; i < values.Count; i++)
+        var padded = new long[8];
+        for (int i = 0; i < Math.Min(values.Count, 8); i++)
+            padded[i] = values[i];
+        
+        var packed = new byte[bitWidth];
+        int bufIdx = 0;
+        int valueIdx = 0;
+        int leftBit = 0;
+        
+        while (valueIdx < 8)
         {
-            var valueBytes = BitConverter.GetBytes(values[i]);
-            if (BitConverter.IsLittleEndian)
-                Array.Reverse(valueBytes);
+            long buffer = 0;
+            int leftSize = 64;
             
-            int offset = i * byteWidth;
-            Array.Copy(valueBytes, 8 - byteWidth, packed, offset, Math.Min(byteWidth, valueBytes.Length - (8 - byteWidth)));
+            if (leftBit > 0)
+            {
+                buffer |= (padded[valueIdx] << (64 - leftBit));
+                leftSize -= leftBit;
+                leftBit = 0;
+                valueIdx++;
+            }
+            
+            while (leftSize >= bitWidth && valueIdx < 8)
+            {
+                buffer |= (padded[valueIdx] << (leftSize - bitWidth));
+                leftSize -= bitWidth;
+                valueIdx++;
+            }
+            
+            if (leftSize > 0 && valueIdx < 8)
+            {
+                buffer |= (long)((ulong)padded[valueIdx] >> (bitWidth - leftSize));
+                leftBit = bitWidth - leftSize;
+            }
+            
+            for (int j = 0; j < 8; j++)
+            {
+                packed[bufIdx] = (byte)((buffer >> ((7 - j) * 8)) & 0xFF);
+                bufIdx++;
+                if (bufIdx >= bitWidth) goto done;
+            }
         }
-        
-        stream.Write(packed, 0, byteWidth * values.Count);
+        done:
+        stream.Write(packed, 0, bitWidth);
     }
     
     private int CalculateBitWidth(List<int> values)
@@ -368,12 +437,14 @@ public class RleEncoder : IEncoder
         return Math.Max(1, bits);
     }
     
-    private static void WriteInt(Stream stream, int value)
+    private static void WriteUnsignedVarInt(Stream stream, int value)
     {
-        var bytes = BitConverter.GetBytes(value);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-        stream.Write(bytes, 0, 4);
+        while ((value & ~0x7F) != 0)
+        {
+            stream.WriteByte((byte)((value & 0x7F) | 0x80));
+            value = (int)((uint)value >> 7);
+        }
+        stream.WriteByte((byte)value);
     }
     
     private static void WriteVarInt(Stream stream, int value)
@@ -388,19 +459,21 @@ public class RleEncoder : IEncoder
     
     private static void WritePaddedInt(Stream stream, int value, int bitWidth)
     {
+        // Java writes RLE repeated value in little-endian byte order
         int byteWidth = (bitWidth + 7) / 8;
-        var bytes = BitConverter.GetBytes(value);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-        stream.Write(bytes, 4 - byteWidth, byteWidth);
+        for (int i = 0; i < byteWidth; i++)
+        {
+            stream.WriteByte((byte)(value >> (i * 8)));
+        }
     }
     
     private static void WritePaddedLong(Stream stream, long value, int bitWidth)
     {
+        // Java writeLongLittleEndianPaddedOnBitWidth uses BytesUtils.longToBytes which is BIG-ENDIAN
         int byteWidth = (bitWidth + 7) / 8;
-        var bytes = BitConverter.GetBytes(value);
-        if (BitConverter.IsLittleEndian)
-            Array.Reverse(bytes);
-        stream.Write(bytes, 8 - byteWidth, byteWidth);
+        for (int i = byteWidth - 1; i >= 0; i--)
+        {
+            stream.WriteByte((byte)(value >> (i * 8)));
+        }
     }
 }

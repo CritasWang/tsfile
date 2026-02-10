@@ -28,17 +28,19 @@ public enum MetadataIndexNodeType : byte
     /// Internal device-level index node
     /// </summary>
     InternalDevice = 0,
-    
-    /// <summary>
-    /// Internal measurement-level index node
-    /// </summary>
-    InternalMeasurement = 1,
-    
+
     /// <summary>
     /// Leaf device-level node pointing to device metadata
+    /// NOTE: Java uses value 1 for LEAF_DEVICE
     /// </summary>
-    LeafDevice = 2,
-    
+    LeafDevice = 1,
+
+    /// <summary>
+    /// Internal measurement-level index node
+    /// NOTE: Java uses value 2 for INTERNAL_MEASUREMENT
+    /// </summary>
+    InternalMeasurement = 2,
+
     /// <summary>
     /// Leaf measurement-level node pointing to time series metadata
     /// </summary>

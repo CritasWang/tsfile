@@ -51,13 +51,16 @@ import java.util.List;
 public class TsFileInteropGenerator {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(TsFileInteropGenerator.class);
-  private static final String OUTPUT_DIR = "/tmp/interop-test-files";
+  private static String OUTPUT_DIR = "/tmp/interop-test-files";
   private static final String DEVICE = "root.test.d0";
   private static final String SENSOR = "s0";
   private static final int VALUE_COUNT = 100;
 
   public static void main(String[] args) {
     try {
+      if (args.length > 0) {
+        OUTPUT_DIR = args[0];
+      }
       File outputDir = new File(OUTPUT_DIR);
       if (outputDir.exists()) {
         deleteDirectory(outputDir);

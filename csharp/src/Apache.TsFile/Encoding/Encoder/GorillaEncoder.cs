@@ -88,15 +88,17 @@ public class GorillaEncoder : IEncoder
     
     public void Flush(MemoryStream stream)
     {
+        // Java GorillaEncoderV2: write ending marker, then flush remaining bits
+        // Int32/Float ending: Integer.MIN_VALUE (0x80000000)
+        // Int64/Double ending: Long.MIN_VALUE (0x8000000000000000)
+        if (_bitWidth == 32)
+            EncodeValue(int.MinValue, 32);
+        else
+            EncodeValue(long.MinValue, 64);
+        
         var bytes = _bitWriter.ToArray();
         
-        // Write length first
-        WriteInt(stream, bytes.Length);
-        
-        // Write bit width
-        stream.WriteByte((byte)_bitWidth);
-        
-        // Write encoded data
+        // Java GorillaEncoderV2 writes raw bit-packed data with no length prefix
         stream.Write(bytes, 0, bytes.Length);
     }
     
@@ -117,12 +119,15 @@ public class GorillaEncoder : IEncoder
             // First value: write as-is
             _bitWriter.WriteBits(value, bitWidth);
             _previousValue = value;
+            _previousLeadingZeros = int.MaxValue;
+            _previousTrailingZeros = 0;
             _first = false;
             return;
         }
         
         // XOR with previous value
         long xor = value ^ _previousValue;
+        _previousValue = value;
         
         if (xor == 0)
         {
@@ -138,32 +143,34 @@ public class GorillaEncoder : IEncoder
             int leadingZeros = CountLeadingZeros(xor, bitWidth);
             int trailingZeros = CountTrailingZeros(xor, bitWidth);
             
+            // Java V2 bit widths: Int32=5/5, Int64=6/6
+            int leadingZeroBits = bitWidth == 32 ? 5 : 6;
+            int meaningfulBitsField = bitWidth == 32 ? 5 : 6;
+            
             // Check if we can use previous block info
             if (leadingZeros >= _previousLeadingZeros && 
-                trailingZeros >= _previousTrailingZeros &&
-                _previousLeadingZeros > 0)
+                trailingZeros >= _previousTrailingZeros)
             {
                 // Use previous block: write '0' + meaningful bits
                 _bitWriter.WriteBit(0);
-                int meaningfulBits = bitWidth - _previousLeadingZeros - _previousTrailingZeros;
-                _bitWriter.WriteBits(xor >> _previousTrailingZeros, meaningfulBits);
+                int significantBits = bitWidth - _previousLeadingZeros - _previousTrailingZeros;
+                _bitWriter.WriteBits(xor >> _previousTrailingZeros, significantBits);
             }
             else
             {
-                // New block: write '1' + leading zeros + length + meaningful bits
+                // New block: write '1' + leading zeros + (significantBits-1) + meaningful bits
                 _bitWriter.WriteBit(1);
-                _bitWriter.WriteBits(leadingZeros, 5); // 5 bits for leading zeros (0-32 or 0-64)
                 
-                int meaningfulBits = bitWidth - leadingZeros - trailingZeros;
-                _bitWriter.WriteBits(meaningfulBits, 6); // 6 bits for length (0-64)
-                _bitWriter.WriteBits(xor >> trailingZeros, meaningfulBits);
+                int significantBits = bitWidth - leadingZeros - trailingZeros;
+                _bitWriter.WriteBits(leadingZeros, leadingZeroBits);
+                // Java stores (significantBits - 1) to allow encoding the full bit width
+                _bitWriter.WriteBits(significantBits - 1, meaningfulBitsField);
+                _bitWriter.WriteBits(xor >> trailingZeros, significantBits);
                 
                 _previousLeadingZeros = leadingZeros;
                 _previousTrailingZeros = trailingZeros;
             }
         }
-        
-        _previousValue = value;
     }
     
     private static int CountLeadingZeros(long value, int bitWidth)

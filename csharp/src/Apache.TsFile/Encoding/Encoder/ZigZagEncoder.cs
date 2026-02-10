@@ -101,23 +101,31 @@ public class ZigZagEncoder : IEncoder
     
     private void EncodeIntegers(MemoryStream stream)
     {
-        WriteVarInt(stream, _intValues.Count);
+        // Java format: [bytesCacheSize: uVarInt][count: uVarInt][zigzag-encoded values]
+        using var byteCache = new MemoryStream();
         foreach (var value in _intValues)
         {
             uint encoded = EncodeZigZag32(value);
-            WriteVarUInt(stream, encoded);
+            WriteVarUInt(byteCache, encoded);
         }
+        WriteVarUInt(stream, (uint)byteCache.Length);
+        WriteVarUInt(stream, (uint)_intValues.Count);
+        byteCache.WriteTo(stream);
         _intValues.Clear();
     }
     
     private void EncodeLongs(MemoryStream stream)
     {
-        WriteVarInt(stream, _longValues.Count);
+        // Java format: [bytesCacheSize: uVarInt][count: uVarInt][zigzag-encoded values]
+        using var byteCache = new MemoryStream();
         foreach (var value in _longValues)
         {
             ulong encoded = EncodeZigZag64(value);
-            WriteVarULong(stream, encoded);
+            WriteVarULong(byteCache, encoded);
         }
+        WriteVarUInt(stream, (uint)byteCache.Length);
+        WriteVarUInt(stream, (uint)_longValues.Count);
+        byteCache.WriteTo(stream);
         _longValues.Clear();
     }
     

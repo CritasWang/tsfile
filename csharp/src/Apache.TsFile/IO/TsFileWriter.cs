@@ -132,14 +132,21 @@ public class TsFileWriter : IDisposable
         if (tablet.RowCount == 0)
             return;
 
-        // Write data to device chunk buffer
-        var buffer = _deviceChunkBuffers[tablet.DeviceName];
-        WriteChunkData(buffer, tablet, schema);
-
-        // If buffer is large enough, flush to file
-        if (buffer.Length >= TsFileConstants.DefaultChunkSize)
+        if (FileVersion == 4)
         {
-            FlushDeviceBuffer(tablet.DeviceName);
+            // V4 writes directly to file stream
+            WriteChunkDataV4(tablet, schema);
+        }
+        else
+        {
+            // V3 writes to buffer first
+            var buffer = _deviceChunkBuffers[tablet.DeviceName];
+            WriteChunkDataV3(buffer, tablet, schema);
+
+            if (buffer.Length >= TsFileConstants.DefaultChunkSize)
+            {
+                FlushDeviceBuffer(tablet.DeviceName);
+            }
         }
     }
 
@@ -208,42 +215,44 @@ public class TsFileWriter : IDisposable
     
     private void WriteChunkData(MemoryStream buffer, Tablet tablet, TableSchema schema)
     {
+        if (FileVersion == 4)
+        {
+            WriteChunkDataV4(tablet, schema);
+        }
+        else
+        {
+            WriteChunkDataV3(buffer, tablet, schema);
+        }
+    }
+
+    private void WriteChunkDataV3(MemoryStream buffer, Tablet tablet, TableSchema schema)
+    {
         using var chunkWriter = new BinaryWriter(buffer, System.Text.Encoding.UTF8, true);
         
-        // Write chunk header marker
         chunkWriter.Write(TsFileConstants.ChunkHeaderMarker);
-        
-        // Write device name
         chunkWriter.Write(tablet.DeviceName);
         
-        // Write each measurement column
         for (int i = 0; i < schema.Measurements.Count; i++)
         {
             var measurement = schema.Measurements[i];
             var encoder = EncoderFactory.CreateEncoder(measurement.Encoding, measurement.DataType);
             var compressor = CompressorFactory.GetCompressor(measurement.Compression);
             
-            // Encode values
             using var valueStream = new MemoryStream();
             EncodeColumn(encoder, tablet, i, valueStream);
             
-            // Compress encoded data
             var encodedData = valueStream.ToArray();
             var compressedData = compressor.Compress(encodedData);
             
-            // Write measurement header
             chunkWriter.Write(measurement.MeasurementName);
             chunkWriter.Write((byte)measurement.DataType);
             chunkWriter.Write((byte)measurement.Encoding);
             chunkWriter.Write((byte)measurement.Compression);
-            
-            // Write data size and data
             chunkWriter.Write(compressedData.Length);
-            chunkWriter.Write(encodedData.Length); // Original size
+            chunkWriter.Write(encodedData.Length);
             chunkWriter.Write(compressedData);
         }
         
-        // Write timestamps
         using var timestampStream = new MemoryStream();
         for (int i = 0; i < tablet.RowCount; i++)
         {
@@ -254,6 +263,224 @@ public class TsFileWriter : IDisposable
         chunkWriter.Write(timestampData.Length);
         chunkWriter.Write(timestampData);
         chunkWriter.Write(tablet.RowCount);
+    }
+
+    private void WriteChunkDataV4(Tablet tablet, TableSchema schema)
+    {
+        bool isTreeModel = schema.ColumnSchemas == null || schema.ColumnSchemas.Count == 0;
+
+        // Write ChunkGroupHeader: [marker:0x00][deviceID]
+        var chunkGroupStart = _fileStream.Position;
+        _writer.Write((byte)0x00);
+        var deviceId = new StringArrayDeviceID(tablet.DeviceName);
+        deviceId.Serialize(_writer);
+
+        var chunkGroupInfo = new ChunkGroupInfo
+        {
+            DeviceId = deviceId,
+            StartOffset = chunkGroupStart
+        };
+
+        if (isTreeModel)
+        {
+            WriteTreeModelChunksV4(tablet, schema, chunkGroupInfo);
+        }
+        else
+        {
+            WriteTableModelChunksV4(tablet, schema, chunkGroupInfo);
+        }
+
+        chunkGroupInfo.EndOffset = _fileStream.Position;
+        _chunkGroups.Add(chunkGroupInfo);
+    }
+
+    private void WriteTreeModelChunksV4(Tablet tablet, TableSchema schema, ChunkGroupInfo chunkGroupInfo)
+    {
+        // Tree model: each measurement is a non-aligned chunk with interleaved time+value pages
+        // Encode timestamps once (shared across all measurements)
+        var timeEncoder = EncoderFactory.CreateEncoder(TsEncoding.Ts2Diff, TsDataType.Int64);
+        using var timeStream = new MemoryStream();
+        for (int row = 0; row < tablet.RowCount; row++)
+            timeEncoder.Encode(tablet.Timestamps[row], timeStream);
+        timeEncoder.Flush(timeStream);
+        var timeBuffer = timeStream.ToArray();
+
+        long startTime = tablet.Timestamps[0];
+        long endTime = tablet.Timestamps[tablet.RowCount - 1];
+
+        for (int i = 0; i < schema.Measurements.Count; i++)
+        {
+            var measurement = schema.Measurements[i];
+            var compressor = CompressorFactory.GetCompressor(measurement.Compression);
+
+            // Encode values
+            var valueEncoder = EncoderFactory.CreateEncoder(measurement.Encoding, measurement.DataType);
+            using var valueStream = new MemoryStream();
+            EncodeColumn(valueEncoder, tablet, i, valueStream);
+            var valueBuffer = valueStream.ToArray();
+
+            // Build page data: [timeBufferLength:unsignedVarInt][timeBuffer][valueBuffer]
+            using var pageDataStream = new MemoryStream();
+            WriteUnsignedVarIntToStream(pageDataStream, timeBuffer.Length);
+            pageDataStream.Write(timeBuffer, 0, timeBuffer.Length);
+            pageDataStream.Write(valueBuffer, 0, valueBuffer.Length);
+            var pageData = pageDataStream.ToArray();
+
+            // Compress page data
+            var compressedPageData = CompressPageData(compressor, pageData, measurement.Compression);
+            int uncompressedSize = pageData.Length;
+            int compressedSize = compressedPageData.Length;
+
+            // Build page header: [uncompressedSize:unsignedVarInt][compressedSize:unsignedVarInt]
+            using var pageHeaderStream = new MemoryStream();
+            WriteUnsignedVarIntToStream(pageHeaderStream, uncompressedSize);
+            WriteUnsignedVarIntToStream(pageHeaderStream, compressedSize);
+            var pageHeader = pageHeaderStream.ToArray();
+
+            int dataSize = pageHeader.Length + compressedSize;
+
+            // Write chunk header: [marker:0x05][measurementId][dataSize][dataType][compression][encoding]
+            var chunkOffset = _fileStream.Position;
+            _writer.Write((byte)0x05); // ONLY_ONE_PAGE_CHUNK_HEADER
+            WriteVarIntString(measurement.MeasurementName);
+            WriteUnsignedVarInt(dataSize);
+            _writer.Write((byte)measurement.DataType);
+            _writer.Write((byte)measurement.Compression);
+            _writer.Write((byte)measurement.Encoding);
+
+            // Write page header + compressed page data
+            _writer.Write(pageHeader);
+            _writer.Write(compressedPageData);
+
+            chunkGroupInfo.Chunks.Add(new ChunkInfo
+            {
+                MeasurementId = measurement.MeasurementName,
+                DataType = measurement.DataType,
+                Encoding = measurement.Encoding,
+                Compression = measurement.Compression,
+                Offset = chunkOffset,
+                IsTimeChunk = false,
+                Count = tablet.RowCount,
+                StartTime = startTime,
+                EndTime = endTime
+            });
+        }
+    }
+
+    private void WriteTableModelChunksV4(Tablet tablet, TableSchema schema, ChunkGroupInfo chunkGroupInfo)
+    {
+        // Table model: separate time chunk + value chunks (aligned)
+        long startTime = tablet.Timestamps[0];
+        long endTime = tablet.Timestamps[tablet.RowCount - 1];
+
+        // Write time chunk
+        var timeCompression = CompressionType.Uncompressed;
+        var timeCompressor = CompressorFactory.GetCompressor(timeCompression);
+        var timeEncoder = EncoderFactory.CreateEncoder(TsEncoding.Ts2Diff, TsDataType.Int64);
+        using var timeStream = new MemoryStream();
+        for (int row = 0; row < tablet.RowCount; row++)
+            timeEncoder.Encode(tablet.Timestamps[row], timeStream);
+        timeEncoder.Flush(timeStream);
+        var timeData = timeStream.ToArray();
+        var compressedTimeData = CompressPageData(timeCompressor, timeData, timeCompression);
+
+        using var timePageHeader = new MemoryStream();
+        WriteUnsignedVarIntToStream(timePageHeader, timeData.Length);
+        WriteUnsignedVarIntToStream(timePageHeader, compressedTimeData.Length);
+        var timePageHeaderBytes = timePageHeader.ToArray();
+        int timeDataSize = timePageHeaderBytes.Length + compressedTimeData.Length;
+
+        var timeChunkOffset = _fileStream.Position;
+        _writer.Write((byte)0x85); // ONLY_ONE_PAGE_TIME_CHUNK_HEADER
+        WriteVarIntString("");
+        WriteUnsignedVarInt(timeDataSize);
+        _writer.Write((byte)TsDataType.Int64);
+        _writer.Write((byte)timeCompression);
+        _writer.Write((byte)TsEncoding.Ts2Diff);
+        _writer.Write(timePageHeaderBytes);
+        _writer.Write(compressedTimeData);
+
+        chunkGroupInfo.Chunks.Add(new ChunkInfo
+        {
+            MeasurementId = "",
+            DataType = TsDataType.Int64,
+            Encoding = TsEncoding.Ts2Diff,
+            Compression = timeCompression,
+            Offset = timeChunkOffset,
+            IsTimeChunk = true,
+            Count = tablet.RowCount,
+            StartTime = startTime,
+            EndTime = endTime
+        });
+
+        // Write value chunks
+        for (int i = 0; i < schema.Measurements.Count; i++)
+        {
+            var measurement = schema.Measurements[i];
+            var compressor = CompressorFactory.GetCompressor(measurement.Compression);
+            var encoder = EncoderFactory.CreateEncoder(measurement.Encoding, measurement.DataType);
+
+            using var valueStream = new MemoryStream();
+            EncodeColumn(encoder, tablet, i, valueStream);
+            var valueData = valueStream.ToArray();
+            var compressedValueData = CompressPageData(compressor, valueData, measurement.Compression);
+
+            using var valuePageHeader = new MemoryStream();
+            WriteUnsignedVarIntToStream(valuePageHeader, valueData.Length);
+            WriteUnsignedVarIntToStream(valuePageHeader, compressedValueData.Length);
+            var valuePageHeaderBytes = valuePageHeader.ToArray();
+            int valueDataSize = valuePageHeaderBytes.Length + compressedValueData.Length;
+
+            var valueChunkOffset = _fileStream.Position;
+            _writer.Write((byte)0x45); // ONLY_ONE_PAGE_VALUE_CHUNK_HEADER
+            WriteVarIntString(measurement.MeasurementName);
+            WriteUnsignedVarInt(valueDataSize);
+            _writer.Write((byte)measurement.DataType);
+            _writer.Write((byte)measurement.Compression);
+            _writer.Write((byte)measurement.Encoding);
+            _writer.Write(valuePageHeaderBytes);
+            _writer.Write(compressedValueData);
+
+            chunkGroupInfo.Chunks.Add(new ChunkInfo
+            {
+                MeasurementId = measurement.MeasurementName,
+                DataType = measurement.DataType,
+                Encoding = measurement.Encoding,
+                Compression = measurement.Compression,
+                Offset = valueChunkOffset,
+                IsTimeChunk = false,
+                Count = tablet.RowCount,
+                StartTime = startTime,
+                EndTime = endTime
+            });
+        }
+    }
+
+    private static byte[] CompressPageData(ICompressor compressor, byte[] data, CompressionType compression)
+    {
+        if (compression == CompressionType.Uncompressed)
+            return data;
+        // For LZ4: Java format does NOT prepend 4-byte size, use raw LZ4 block
+        if (compression == CompressionType.Lz4)
+        {
+            var maxSize = K4os.Compression.LZ4.LZ4Codec.MaximumOutputSize(data.Length);
+            var output = new byte[maxSize];
+            var compressedSize = K4os.Compression.LZ4.LZ4Codec.Encode(data, 0, data.Length, output, 0, maxSize);
+            var result = new byte[compressedSize];
+            Array.Copy(output, 0, result, 0, compressedSize);
+            return result;
+        }
+        return compressor.Compress(data);
+    }
+
+    private static void WriteUnsignedVarIntToStream(Stream stream, int value)
+    {
+        while ((value & ~0x7F) != 0)
+        {
+            stream.WriteByte((byte)((value & 0x7F) | 0x80));
+            value = (int)((uint)value >> 7);
+        }
+        stream.WriteByte((byte)value);
     }
     
     private void EncodeColumn(IEncoder encoder, Tablet tablet, int columnIndex, MemoryStream stream)
@@ -338,10 +565,93 @@ public class TsFileWriter : IDisposable
         _writer.Write((byte)0x02);
         var metadataStartPos = _fileStream.Position;
 
-        // Build and write table index nodes
-        var tableIndexNodes = BuildTableIndexNodes();
-        WriteVarInt(tableIndexNodes.Count);
+        // Group chunks by device, then by measurement
+        var deviceChunks = new Dictionary<string, Dictionary<string, List<ChunkInfo>>>();
+        foreach (var cg in _chunkGroups)
+        {
+            var deviceName = cg.DeviceId.GetTableName();
+            if (!deviceChunks.ContainsKey(deviceName))
+                deviceChunks[deviceName] = new Dictionary<string, List<ChunkInfo>>();
+            foreach (var chunk in cg.Chunks)
+            {
+                if (!deviceChunks[deviceName].ContainsKey(chunk.MeasurementId))
+                    deviceChunks[deviceName][chunk.MeasurementId] = new List<ChunkInfo>();
+                deviceChunks[deviceName][chunk.MeasurementId].Add(chunk);
+            }
+        }
 
+        // Serialize TimeseriesMetadata for each measurement and build index
+        var deviceMeasurementNodes = new Dictionary<string, MetadataIndexNode>();
+        foreach (var (deviceName, measurements) in deviceChunks)
+        {
+            var measurementNode = new MetadataIndexNode(MetadataIndexNodeType.LeafMeasurement);
+            foreach (var (measurementId, chunks) in measurements)
+            {
+                // Record position for index entry
+                var tsMetadataOffset = _fileStream.Position;
+                measurementNode.AddEntry(new MeasurementMetadataIndexEntry(measurementId, tsMetadataOffset));
+
+                // Serialize TimeseriesMetadata
+                WriteTimeseriesMetadata(measurementId, chunks);
+            }
+            measurementNode.SetEndOffset(_fileStream.Position);
+            deviceMeasurementNodes[deviceName] = measurementNode;
+        }
+
+        // Build table index nodes
+        // For tree model: table name = device path, node type = LeafMeasurement
+        // For table model: table name from schema, node type = LeafDevice
+        var tableIndexNodes = new Dictionary<string, MetadataIndexNode>();
+        bool hasTableModel = _schemas.Values.Any(s => s.ColumnSchemas != null && s.ColumnSchemas.Count > 0);
+
+        if (hasTableModel)
+        {
+            // Table model: group devices by table name
+            var tableDevices = new Dictionary<string, List<(IDeviceID DeviceId, MetadataIndexNode Node)>>();
+            foreach (var (deviceName, node) in deviceMeasurementNodes)
+            {
+                var tableName = deviceName;
+                if (_schemas.TryGetValue(deviceName, out var schema))
+                    tableName = schema.TableName;
+                if (!tableDevices.ContainsKey(tableName))
+                    tableDevices[tableName] = new List<(IDeviceID, MetadataIndexNode)>();
+                tableDevices[tableName].Add((new StringArrayDeviceID(deviceName), node));
+            }
+            foreach (var (tableName, devices) in tableDevices)
+            {
+                var deviceNode = new MetadataIndexNode(MetadataIndexNodeType.LeafDevice);
+                foreach (var (deviceId, node) in devices)
+                {
+                    // Serialize measurement node and record offset
+                    var nodeOffset = _fileStream.Position;
+                    node.Serialize(_writer);
+                    deviceNode.AddEntry(new DeviceMetadataIndexEntry(deviceId, nodeOffset));
+                }
+                deviceNode.SetEndOffset(_fileStream.Position);
+                tableIndexNodes[tableName] = deviceNode;
+            }
+        }
+        else
+        {
+            // Tree model: each device path is a table
+            // Top-level node must be device-level (matching Java's structure)
+            foreach (var (deviceName, measurementNode) in deviceMeasurementNodes)
+            {
+                var deviceNode = new MetadataIndexNode(MetadataIndexNodeType.LeafDevice);
+                // Serialize measurement node to get its offset
+                var measurementNodeOffset = _fileStream.Position;
+                measurementNode.Serialize(_writer);
+                deviceNode.AddEntry(new DeviceMetadataIndexEntry(new StringArrayDeviceID(deviceName), measurementNodeOffset));
+                deviceNode.SetEndOffset(_fileStream.Position);
+                tableIndexNodes[deviceName] = deviceNode;
+            }
+        }
+
+        // TsFileMetadata block starts here (this is what metadataSize measures)
+        var tsFileMetadataStart = _fileStream.Position;
+
+        // Write table index node map
+        WriteUnsignedVarInt(tableIndexNodes.Count);
         foreach (var (tableName, indexNode) in tableIndexNodes)
         {
             WriteVarIntString(tableName);
@@ -349,34 +659,160 @@ public class TsFileWriter : IDisposable
         }
 
         // Write table schema map
-        WriteVarInt(_schemas.Count);
-        foreach (var schema in _schemas.Values)
+        if (hasTableModel)
         {
-            WriteVarIntString(schema.TableName);
-            var columns = schema.ColumnSchemas ?? new List<ColumnSchema>();
-            WriteVarInt(columns.Count);
-            foreach (var col in columns)
+            WriteUnsignedVarInt(_schemas.Count);
+            foreach (var schema in _schemas.Values)
             {
-                // Write column in Java-compatible format
-                WriteInt32PrefixedString(col.Name);
-                _writer.Write((byte)col.DataType);
-                _writer.Write((byte)col.Encoding);
-                _writer.Write((byte)col.Compression);
-                WriteInt32BigEndian(0); // props map count (empty)
-                WriteInt32BigEndian((int)col.Category);
+                WriteVarIntString(schema.TableName);
+                var columns = schema.ColumnSchemas ?? new List<ColumnSchema>();
+                WriteUnsignedVarInt(columns.Count);
+                foreach (var col in columns)
+                {
+                    WriteInt32PrefixedString(col.Name);
+                    _writer.Write((byte)col.DataType);
+                    _writer.Write((byte)col.Encoding);
+                    _writer.Write((byte)col.Compression);
+                    WriteInt32BigEndian(0); // props map count (empty)
+                    WriteInt32BigEndian((int)col.Category);
+                }
             }
         }
+        else
+        {
+            // Tree model: no table schemas
+            WriteUnsignedVarInt(0);
+        }
 
-        // Write metadata offset (big-endian)
+        // Write metadata offset (big-endian) - points to SEPARATOR byte
         WriteLongBigEndian(metadataStartPos);
 
         // Write bloom filter (empty) and properties (empty)
-        WriteVarInt(0);
-        WriteVarInt(0);
+        WriteUnsignedVarInt(0);
+        WriteUnsignedVarInt(0);
 
-        // Calculate and write metadata size (big-endian, 4 bytes)
-        var metadataSize = (int)(_fileStream.Position - metadataStartPos);
+        // Calculate and write TsFileMetadata size (big-endian, 4 bytes)
+        // This measures only the TsFileMetadata block, NOT TimeseriesMetadata or intermediate nodes
+        var metadataSize = (int)(_fileStream.Position - tsFileMetadataStart);
         WriteInt32BigEndian(metadataSize);
+    }
+
+    private void WriteTimeseriesMetadata(string measurementId, List<ChunkInfo> chunks)
+    {
+        // Aggregate statistics across all chunks
+        long totalCount = 0;
+        long startTime = long.MaxValue;
+        long endTime = long.MinValue;
+        var dataType = chunks[0].DataType;
+
+        foreach (var chunk in chunks)
+        {
+            totalCount += chunk.Count;
+            if (chunk.StartTime < startTime) startTime = chunk.StartTime;
+            if (chunk.EndTime > endTime) endTime = chunk.EndTime;
+        }
+
+        // Build ChunkMetadata list buffer
+        using var chunkMetaBuffer = new MemoryStream();
+        bool hasStatistics = chunks.Count > 1;
+        foreach (var chunk in chunks)
+        {
+            // ChunkMetadata: [offsetOfChunkHeader:Int64BE][statistics if multiple chunks]
+            WriteLongBigEndianToStream(chunkMetaBuffer, chunk.Offset);
+            // For single chunk, no per-chunk statistics (they're in TimeseriesMetadata)
+        }
+        var chunkMetaBytes = chunkMetaBuffer.ToArray();
+
+        // Build statistics buffer
+        using var statsBuffer = new MemoryStream();
+        WriteStatisticsV4(statsBuffer, dataType, totalCount, startTime, endTime);
+        var statsBytes = statsBuffer.ToArray();
+
+        // TimeseriesMetadata type byte:
+        // Bit 7 (0x80): has chunk metadata list
+        // Bits 0-5: 0 for non-aligned, chunk type flags for aligned
+        byte tsMetaType = 0x00;
+        if (chunks.Count > 0 && !chunks[0].IsTimeChunk)
+            tsMetaType = 0x00; // non-aligned measurement
+        // Set bit 7 to indicate we have chunk metadata
+        // Java: timeSeriesMetadataType & 0x80 != 0 means has statistics in chunk metadata
+        // For single chunk: type = 0 (no per-chunk stats)
+        // For multiple chunks: type = 0x80 (has per-chunk stats)
+
+        int chunkMetaDataListDataSize = chunkMetaBytes.Length;
+
+        // Write: [type][measurementId:VarIntString][dataType][chunkMetaDataListDataSize:unsignedVarInt][statistics][chunkMetaList]
+        _writer.Write(tsMetaType);
+        WriteVarIntString(measurementId);
+        _writer.Write((byte)dataType);
+        WriteUnsignedVarInt(chunkMetaDataListDataSize);
+        _writer.Write(statsBytes);
+        _writer.Write(chunkMetaBytes);
+    }
+
+    private void WriteStatisticsV4(Stream stream, TsDataType dataType, long count, long startTime, long endTime)
+    {
+        // Statistics format: [count:unsignedVarInt][startTime:Int64BE][endTime:Int64BE][type-specific stats]
+        WriteUnsignedVarIntToStream(stream, (int)count);
+        WriteLongBigEndianToStream(stream, startTime);
+        WriteLongBigEndianToStream(stream, endTime);
+
+        // Type-specific statistics (minimal: zeros for now)
+        switch (dataType)
+        {
+            case TsDataType.Boolean:
+                // first(1) + last(1) + sum(8) = 10 bytes
+                stream.Write(new byte[10], 0, 10);
+                break;
+            case TsDataType.Int32:
+            case TsDataType.Date:
+                // min(4) + max(4) + first(4) + last(4) + sum(8) = 24 bytes
+                stream.Write(new byte[24], 0, 24);
+                break;
+            case TsDataType.Int64:
+            case TsDataType.Timestamp:
+                // min(8) + max(8) + first(8) + last(8) + sum(8) = 40 bytes
+                stream.Write(new byte[40], 0, 40);
+                break;
+            case TsDataType.Float:
+                // min(4) + max(4) + first(4) + last(4) + sum(8) = 24 bytes
+                stream.Write(new byte[24], 0, 24);
+                break;
+            case TsDataType.Double:
+                // min(8) + max(8) + first(8) + last(8) + sum(8) = 40 bytes
+                stream.Write(new byte[40], 0, 40);
+                break;
+            case TsDataType.Text:
+            case TsDataType.String:
+                // first: [len:Int32BE][bytes], last: [len:Int32BE][bytes]
+                // Empty strings: len=0
+                WriteInt32BigEndianToStream(stream, 0);
+                WriteInt32BigEndianToStream(stream, 0);
+                break;
+            case TsDataType.Blob:
+                // 0 bytes
+                break;
+        }
+    }
+
+    private static void WriteLongBigEndianToStream(Stream stream, long value)
+    {
+        stream.WriteByte((byte)(value >> 56));
+        stream.WriteByte((byte)(value >> 48));
+        stream.WriteByte((byte)(value >> 40));
+        stream.WriteByte((byte)(value >> 32));
+        stream.WriteByte((byte)(value >> 24));
+        stream.WriteByte((byte)(value >> 16));
+        stream.WriteByte((byte)(value >> 8));
+        stream.WriteByte((byte)value);
+    }
+
+    private static void WriteInt32BigEndianToStream(Stream stream, int value)
+    {
+        stream.WriteByte((byte)(value >> 24));
+        stream.WriteByte((byte)(value >> 16));
+        stream.WriteByte((byte)(value >> 8));
+        stream.WriteByte((byte)value);
     }
     
     private void WriteFooter()
@@ -393,31 +829,9 @@ public class TsFileWriter : IDisposable
         stream.Write(bytes, 0, 8);
     }
 
-    private Dictionary<string, MetadataIndexNode> BuildTableIndexNodes()
+    private void WriteUnsignedVarInt(int value)
     {
-        var result = new Dictionary<string, MetadataIndexNode>();
-        var tableChunkGroups = _chunkGroups.GroupBy(cg => cg.DeviceId.GetTableName());
-
-        foreach (var tableGroup in tableChunkGroups)
-        {
-            var tableName = tableGroup.Key;
-            var deviceNode = new MetadataIndexNode(MetadataIndexNodeType.LeafDevice);
-
-            foreach (var chunkGroup in tableGroup)
-            {
-                var entry = new DeviceMetadataIndexEntry(chunkGroup.DeviceId, chunkGroup.StartOffset);
-                deviceNode.AddEntry(entry);
-            }
-
-            deviceNode.SetEndOffset(_fileStream.Position);
-            result[tableName] = deviceNode;
-        }
-
-        return result;
-    }
-
-    private void WriteVarInt(int value)
-    {
+        // Unsigned VarInt (no ZigZag) - matches Java ReadWriteForEncodingUtils.writeUnsignedVarInt
         while ((value & ~0x7F) != 0)
         {
             _writer.Write((byte)((value & 0x7F) | 0x80));
@@ -426,10 +840,19 @@ public class TsFileWriter : IDisposable
         _writer.Write((byte)value);
     }
 
+    private void WriteZigZagVarInt(int value)
+    {
+        // ZigZag VarInt - matches Java ReadWriteForEncodingUtils.writeVarInt
+        // ZigZag encode: (value << 1) ^ (value >> 31)
+        int zigzag = (value << 1) ^ (value >> 31);
+        WriteUnsignedVarInt(zigzag);
+    }
+
     private void WriteVarIntString(string value)
     {
+        // Matches Java ReadWriteIOUtils.writeVar which uses writeVarInt (ZigZag)
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        WriteVarInt(bytes.Length);
+        WriteZigZagVarInt(bytes.Length);
         _writer.Write(bytes);
     }
 

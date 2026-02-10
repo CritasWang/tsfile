@@ -91,7 +91,8 @@ public class ZigZagDecoder : IDecoder
     {
         if (_intQueue.Count > 0) return;
         
-        // Read count
+        // Java format: [bytesCacheSize: uVarInt][count: uVarInt][zigzag-encoded values]
+        int bytesCacheSize = (int)ReadVarUInt(buffer, ref offset);
         int count = (int)ReadVarUInt(buffer, ref offset);
         
         // Read all values
@@ -107,7 +108,8 @@ public class ZigZagDecoder : IDecoder
     {
         if (_longQueue.Count > 0) return;
         
-        // Read count
+        // Java format: [bytesCacheSize: uVarInt][count: uVarInt][zigzag-encoded values]
+        int bytesCacheSize = (int)ReadVarUInt(buffer, ref offset);
         int count = (int)ReadVarUInt(buffer, ref offset);
         
         // Read all values

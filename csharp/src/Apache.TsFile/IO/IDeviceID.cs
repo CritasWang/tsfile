@@ -177,11 +177,12 @@ public class StringArrayDeviceID : IDeviceID
             if (_serializedSize != -1)
                 return _serializedSize;
             
-            int cnt = VarIntSize(_segments.Length);
+            int cnt = VarIntSize(_segments.Length); // segment count: unsigned VarInt
             foreach (var segment in _segments)
             {
                 var bytes = segment != null ? System.Text.Encoding.UTF8.GetBytes(segment) : Array.Empty<byte>();
-                cnt += VarIntSize(bytes.Length);
+                // String length uses ZigZag VarInt: positive n maps to 2n
+                cnt += VarIntSize((bytes.Length << 1) ^ (bytes.Length >> 31));
                 cnt += bytes.Length;
             }
             _serializedSize = cnt;
@@ -259,14 +260,23 @@ public class StringArrayDeviceID : IDeviceID
         return count + 1;
     }
     
+    private static int WriteZigZagVarInt(BinaryWriter writer, int value)
+    {
+        // ZigZag encode: (value << 1) ^ (value >> 31)
+        int zigzag = (value << 1) ^ (value >> 31);
+        return WriteVarInt(writer, zigzag);
+    }
+
     private static int WriteVarIntString(BinaryWriter writer, string? value)
     {
         if (value == null)
         {
-            return WriteVarInt(writer, -1);
+            // Java uses writeVarInt(NO_BYTE_TO_READ = -1) which ZigZag encodes -1
+            return WriteZigZagVarInt(writer, -1);
         }
         var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        int cnt = WriteVarInt(writer, bytes.Length);
+        // Java uses writeVarInt (ZigZag) for string length
+        int cnt = WriteZigZagVarInt(writer, bytes.Length);
         writer.Write(bytes);
         return cnt + bytes.Length;
     }
