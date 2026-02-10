@@ -149,6 +149,9 @@
                             <exclude>PR_SUMMARY.md</exclude>
                             <!-- Interop test scripts -->
                             <exclude>run-interop-tests.sh</exclude>
+                            <exclude>run-java-interop-tests.sh</exclude>
+                            <!-- Spec documentation files -->
+                            <exclude>specs/**/*.md</exclude>
                         </excludes>
                     </configuration>
                 </plugin>

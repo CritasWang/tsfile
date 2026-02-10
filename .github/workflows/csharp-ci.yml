@@ -122,8 +122,19 @@ jobs:
           # Compile tsfile module (OSGi bundle plugin strips classes from jar during install,
           # so we compile first, then manually create and install the full jar)
           mvn clean compile -pl tsfile -am -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dmdep.analyze.skip=true -Drat.skip=true -q
-          # Create full jar from compiled classes
-          jar cf tsfile/target/tsfile-2.2.1-SNAPSHOT.jar -C tsfile/target/classes .
+          # Install parent POMs so interop-tests can resolve its parent chain
+          mvn install:install-file -Dfile=../pom.xml \
+            -DgroupId=org.apache.tsfile -DartifactId=tsfile-parent -Dversion=2.2.1-SNAPSHOT \
+            -Dpackaging=pom -q
+          mvn install:install-file -Dfile=pom.xml \
+            -DgroupId=org.apache.tsfile -DartifactId=tsfile-java -Dversion=2.2.1-SNAPSHOT \
+            -Dpackaging=pom -q
+          # Create full jar from compiled classes (merge common module classes
+          # since the OSGi bundle plugin normally inlines them)
+          rm -rf /tmp/tsfile-combined && mkdir -p /tmp/tsfile-combined
+          cp -r common/target/classes/* /tmp/tsfile-combined/
+          cp -r tsfile/target/classes/* /tmp/tsfile-combined/
+          jar cf tsfile/target/tsfile-2.2.1-SNAPSHOT.jar -C /tmp/tsfile-combined .
           # Install to local Maven repo
           mvn install:install-file \
             -Dfile=tsfile/target/tsfile-2.2.1-SNAPSHOT.jar \
