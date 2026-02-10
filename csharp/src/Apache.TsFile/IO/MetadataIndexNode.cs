@@ -209,12 +209,12 @@ public class MetadataIndexNode
     /// <summary>
     /// Deserializes a metadata index node from a binary stream (simplified legacy format).
     /// </summary>
-    public static MetadataIndexNode Deserialize(BinaryReader reader, Func<int> readVarInt, Func<string> readVarIntString)
+    public static MetadataIndexNode Deserialize(BinaryReader reader, Func<int> readUnsignedVarInt, Func<string> readVarIntString)
     {
         var node = new MetadataIndexNode();
         
-        // Read children size
-        var childrenSize = readVarInt();
+        // Read children size (unsigned VarInt, matching Serialize format)
+        var childrenSize = readUnsignedVarInt();
         
         // Read each child entry (name -> offset)
         for (int i = 0; i < childrenSize; i++)

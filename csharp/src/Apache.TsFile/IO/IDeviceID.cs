@@ -157,7 +157,7 @@ public class StringArrayDeviceID : IDeviceID
     
     public bool IsEmpty => _segments == null || _segments.Length == 0;
     
-    public bool IsTableModel => !_segments[0].StartsWith(PathRoot + PathSeparator);
+    public bool IsTableModel => _segments.Length > 0 && !_segments[0].StartsWith(PathRoot + PathSeparator);
     
     public int Serialize(BinaryWriter writer)
     {

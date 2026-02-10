@@ -398,43 +398,53 @@ public class RleEncoder : IEncoder
     {
         if (values.Count == 0) return 1;
         
-        // For negative numbers, we need all 32 bits
-        bool hasNegative = values.Any(v => v < 0);
-        if (hasNegative)
+        // Use unsigned bit width (matches Java's getIntMaxBitWidth)
+        int maxWidth = 1;
+        foreach (var v in values)
         {
-            return 32; // Need full width for signed integers
+            int w = 32 - LeadingZeros((uint)v);
+            if (w > maxWidth) maxWidth = w;
         }
-        
-        int maxValue = values.Max();
-        
-        // Calculate bits needed for positive values
-        int bits = 1;
-        while ((1 << bits) <= maxValue && bits < 32)
-        {
-            bits++;
-        }
-        return Math.Max(1, bits);
+        return maxWidth;
     }
     
     private int CalculateBitWidth(List<long> values)
     {
         if (values.Count == 0) return 1;
         
-        // For negative numbers, we need all 64 bits
-        bool hasNegative = values.Any(v => v < 0);
-        if (hasNegative)
+        // Use unsigned bit width (matches Java's getLongMaxBitWidth)
+        int maxWidth = 1;
+        foreach (var v in values)
         {
-            return 64; // Need full width for signed integers
+            int w = 64 - LeadingZeros((ulong)v);
+            if (w > maxWidth) maxWidth = w;
         }
-        
-        long maxValue = values.Max();
-        
-        int bits = 1;
-        while ((1L << bits) <= maxValue && bits < 64)
-        {
-            bits++;
-        }
-        return Math.Max(1, bits);
+        return maxWidth;
+    }
+    
+    private static int LeadingZeros(uint v)
+    {
+        if (v == 0) return 32;
+        int n = 0;
+        if (v <= 0x0000FFFF) { n += 16; v <<= 16; }
+        if (v <= 0x00FFFFFF) { n += 8; v <<= 8; }
+        if (v <= 0x0FFFFFFF) { n += 4; v <<= 4; }
+        if (v <= 0x3FFFFFFF) { n += 2; v <<= 2; }
+        if (v <= 0x7FFFFFFF) { n += 1; }
+        return n;
+    }
+    
+    private static int LeadingZeros(ulong v)
+    {
+        if (v == 0) return 64;
+        int n = 0;
+        if (v <= 0x00000000FFFFFFFFUL) { n += 32; v <<= 32; }
+        if (v <= 0x0000FFFFFFFFFFFFUL) { n += 16; v <<= 16; }
+        if (v <= 0x00FFFFFFFFFFFFFFUL) { n += 8; v <<= 8; }
+        if (v <= 0x0FFFFFFFFFFFFFFFUL) { n += 4; v <<= 4; }
+        if (v <= 0x3FFFFFFFFFFFFFFFUL) { n += 2; v <<= 2; }
+        if (v <= 0x7FFFFFFFFFFFFFFFUL) { n += 1; }
+        return n;
     }
     
     private static void WriteUnsignedVarInt(Stream stream, int value)

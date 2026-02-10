@@ -160,7 +160,7 @@ public class TsFileReader : IDisposable
                 ReadTsFileMetadataV3Java();
                 return;
             }
-            catch
+            catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or ArgumentOutOfRangeException)
             {
                 // Not Java V3 format, try C# simplified format
             }
@@ -323,12 +323,12 @@ public class TsFileReader : IDisposable
             // 4. Skip bloom filter if present
             if (_fileStream.Position < _fileStream.Length - 10)
             {
-                var bloomFilterBytesLength = ReadVarInt();
+                var bloomFilterBytesLength = ReadUnsignedVarInt();
                 if (bloomFilterBytesLength > 0 && bloomFilterBytesLength < TsFileConstants.MaxBloomFilterSize)
                 {
                     _reader.ReadBytes(bloomFilterBytesLength);
-                    ReadVarInt(); // filterSize
-                    ReadVarInt(); // hashFunctionSize
+                    ReadUnsignedVarInt(); // filterSize
+                    ReadUnsignedVarInt(); // hashFunctionSize
                 }
             }
 
@@ -460,6 +460,8 @@ public class TsFileReader : IDisposable
     private int ReadInt32BigEndian(BinaryReader reader)
     {
         var bytes = reader.ReadBytes(4);
+        if (bytes.Length < 4)
+            throw new InvalidDataException($"Expected 4 bytes for Int32, but only {bytes.Length} bytes available");
         if (BitConverter.IsLittleEndian)
             Array.Reverse(bytes);
         return BitConverter.ToInt32(bytes, 0);
@@ -468,6 +470,8 @@ public class TsFileReader : IDisposable
     private long ReadInt64BigEndian(BinaryReader reader)
     {
         var bytes = reader.ReadBytes(8);
+        if (bytes.Length < 8)
+            throw new InvalidDataException($"Expected 8 bytes for Int64, but only {bytes.Length} bytes available");
         if (BitConverter.IsLittleEndian)
             Array.Reverse(bytes);
         return BitConverter.ToInt64(bytes, 0);
@@ -1234,14 +1238,22 @@ public class QueryResult
     
     public Tablet ToTablet()
     {
-        var tablet = new Tablet(DeviceName, Schema.Measurements, Timestamps.Count);
+        // Use only measurements that have data (handles filtered queries)
+        var availableMeasurements = Schema.Measurements
+            .Where(m => MeasurementData.ContainsKey(m.MeasurementName))
+            .ToList();
+
+        if (availableMeasurements.Count == 0)
+            return new Tablet(DeviceName, Schema.Measurements, Math.Max(1, Timestamps.Count));
+
+        var tablet = new Tablet(DeviceName, availableMeasurements, Timestamps.Count);
         
         for (int i = 0; i < Timestamps.Count; i++)
         {
-            var values = new object[Schema.Measurements.Count];
-            for (int j = 0; j < Schema.Measurements.Count; j++)
+            var values = new object[availableMeasurements.Count];
+            for (int j = 0; j < availableMeasurements.Count; j++)
             {
-                var measurementName = Schema.Measurements[j].MeasurementName;
+                var measurementName = availableMeasurements[j].MeasurementName;
                 values[j] = MeasurementData[measurementName][i];
             }
             

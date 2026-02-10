@@ -164,7 +164,7 @@ public class GorillaDecoder : IDecoder
                 storedValue = nextValue;
             }
         }
-        catch
+        catch (Exception ex) when (ex is IndexOutOfRangeException or InvalidOperationException or ArgumentOutOfRangeException)
         {
             // End of stream — no more bits to read
         }

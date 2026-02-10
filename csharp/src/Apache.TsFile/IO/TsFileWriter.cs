@@ -88,7 +88,10 @@ public class TsFileWriter : IDisposable
             throw new ArgumentException($"Schema for table {schema.TableName} already registered");
 
         _schemas[schema.TableName] = schema;
-        _deviceChunkBuffers[schema.TableName] = new MemoryStream();
+        if (FileVersion != 4)
+        {
+            _deviceChunkBuffers[schema.TableName] = new MemoryStream();
+        }
     }
 
     /// <summary>
@@ -214,18 +217,6 @@ public class TsFileWriter : IDisposable
         _headerWritten = true;
     }
     
-    private void WriteChunkData(MemoryStream buffer, Tablet tablet, TableSchema schema)
-    {
-        if (FileVersion == 4)
-        {
-            WriteChunkDataV4(tablet, schema);
-        }
-        else
-        {
-            WriteChunkDataV3(buffer, tablet, schema);
-        }
-    }
-
     private void WriteChunkDataV3(MemoryStream buffer, Tablet tablet, TableSchema schema)
     {
         using var chunkWriter = new BinaryWriter(buffer, System.Text.Encoding.UTF8, true);
@@ -353,6 +344,7 @@ public class TsFileWriter : IDisposable
             _writer.Write(pageHeader);
             _writer.Write(compressedPageData);
 
+            var stats = ComputeColumnStatistics(tablet, i, measurement.DataType);
             chunkGroupInfo.Chunks.Add(new ChunkInfo
             {
                 MeasurementId = measurement.MeasurementName,
@@ -363,7 +355,12 @@ public class TsFileWriter : IDisposable
                 IsTimeChunk = false,
                 Count = tablet.RowCount,
                 StartTime = startTime,
-                EndTime = endTime
+                EndTime = endTime,
+                MinValue = stats.Min,
+                MaxValue = stats.Max,
+                FirstValue = stats.First,
+                LastValue = stats.Last,
+                SumValue = stats.Sum
             });
         }
     }
@@ -442,6 +439,7 @@ public class TsFileWriter : IDisposable
             _writer.Write(valuePageHeaderBytes);
             _writer.Write(compressedValueData);
 
+            var valStats = ComputeColumnStatistics(tablet, i, measurement.DataType);
             chunkGroupInfo.Chunks.Add(new ChunkInfo
             {
                 MeasurementId = measurement.MeasurementName,
@@ -452,8 +450,97 @@ public class TsFileWriter : IDisposable
                 IsTimeChunk = false,
                 Count = tablet.RowCount,
                 StartTime = startTime,
-                EndTime = endTime
+                EndTime = endTime,
+                MinValue = valStats.Min,
+                MaxValue = valStats.Max,
+                FirstValue = valStats.First,
+                LastValue = valStats.Last,
+                SumValue = valStats.Sum
             });
+        }
+    }
+
+    private record ColumnStats(object? Min, object? Max, object? First, object? Last, double Sum);
+
+    private static ColumnStats ComputeColumnStatistics(Tablet tablet, int columnIndex, TsDataType dataType)
+    {
+        if (tablet.RowCount == 0)
+            return new ColumnStats(null, null, null, null, 0.0);
+
+        var values = tablet.Values[columnIndex];
+        switch (dataType)
+        {
+            case TsDataType.Boolean:
+            {
+                var arr = (bool[])values!;
+                bool first = arr[0], last = arr[tablet.RowCount - 1];
+                long sum = 0;
+                for (int r = 0; r < tablet.RowCount; r++) if (arr[r]) sum++;
+                return new ColumnStats(null, null, first, last, sum);
+            }
+            case TsDataType.Int32:
+            case TsDataType.Date:
+            {
+                var arr = (int[])values!;
+                int min = arr[0], max = arr[0];
+                double sum = 0;
+                for (int r = 0; r < tablet.RowCount; r++)
+                {
+                    if (arr[r] < min) min = arr[r];
+                    if (arr[r] > max) max = arr[r];
+                    sum += arr[r];
+                }
+                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+            }
+            case TsDataType.Int64:
+            case TsDataType.Timestamp:
+            {
+                var arr = (long[])values!;
+                long min = arr[0], max = arr[0];
+                double sum = 0;
+                for (int r = 0; r < tablet.RowCount; r++)
+                {
+                    if (arr[r] < min) min = arr[r];
+                    if (arr[r] > max) max = arr[r];
+                    sum += arr[r];
+                }
+                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+            }
+            case TsDataType.Float:
+            {
+                var arr = (float[])values!;
+                float min = arr[0], max = arr[0];
+                double sum = 0;
+                for (int r = 0; r < tablet.RowCount; r++)
+                {
+                    if (arr[r] < min) min = arr[r];
+                    if (arr[r] > max) max = arr[r];
+                    sum += arr[r];
+                }
+                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+            }
+            case TsDataType.Double:
+            {
+                var arr = (double[])values!;
+                double min = arr[0], max = arr[0], sum = 0;
+                for (int r = 0; r < tablet.RowCount; r++)
+                {
+                    if (arr[r] < min) min = arr[r];
+                    if (arr[r] > max) max = arr[r];
+                    sum += arr[r];
+                }
+                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+            }
+            case TsDataType.Text:
+            case TsDataType.String:
+            {
+                var arr = (string[])values!;
+                var first = arr[0] ?? string.Empty;
+                var last = arr[tablet.RowCount - 1] ?? string.Empty;
+                return new ColumnStats(null, null, first, last, 0.0);
+            }
+            default:
+                return new ColumnStats(null, null, null, null, 0.0);
         }
     }
 
@@ -698,9 +785,10 @@ public class TsFileWriter : IDisposable
         // Write metadata offset (big-endian) - points to SEPARATOR byte
         WriteLongBigEndian(metadataStartPos);
 
-        // Write bloom filter (empty) and properties (empty)
+        // Write bloom filter (empty) - Java uses writeUnsignedVarInt
         WriteUnsignedVarInt(0);
-        WriteUnsignedVarInt(0);
+        // Write properties count (empty) - Java uses writeVarInt (ZigZag)
+        WriteZigZagVarInt(0);
 
         // Calculate and write TsFileMetadata size (big-endian, 4 bytes)
         // This measures only the TsFileMetadata block, NOT TimeseriesMetadata or intermediate nodes
@@ -715,12 +803,20 @@ public class TsFileWriter : IDisposable
         long startTime = long.MaxValue;
         long endTime = long.MinValue;
         var dataType = chunks[0].DataType;
+        object? aggMin = chunks[0].MinValue;
+        object? aggMax = chunks[0].MaxValue;
+        object? aggFirst = chunks[0].FirstValue;
+        object? aggLast = chunks[0].LastValue;
+        double aggSum = 0;
 
         foreach (var chunk in chunks)
         {
             totalCount += chunk.Count;
-            if (chunk.StartTime < startTime) startTime = chunk.StartTime;
-            if (chunk.EndTime > endTime) endTime = chunk.EndTime;
+            if (chunk.StartTime < startTime) { startTime = chunk.StartTime; aggFirst = chunk.FirstValue; }
+            if (chunk.EndTime > endTime) { endTime = chunk.EndTime; aggLast = chunk.LastValue; }
+            aggSum += chunk.SumValue;
+            aggMin = AggregateMin(aggMin, chunk.MinValue, dataType);
+            aggMax = AggregateMax(aggMax, chunk.MaxValue, dataType);
         }
 
         // Build ChunkMetadata list buffer
@@ -736,7 +832,7 @@ public class TsFileWriter : IDisposable
 
         // Build statistics buffer
         using var statsBuffer = new MemoryStream();
-        WriteStatisticsV4(statsBuffer, dataType, totalCount, startTime, endTime);
+        WriteStatisticsV4(statsBuffer, dataType, totalCount, startTime, endTime, aggMin, aggMax, aggFirst, aggLast, aggSum);
         var statsBytes = statsBuffer.ToArray();
 
         // TimeseriesMetadata type byte:
@@ -761,49 +857,100 @@ public class TsFileWriter : IDisposable
         _writer.Write(chunkMetaBytes);
     }
 
-    private void WriteStatisticsV4(Stream stream, TsDataType dataType, long count, long startTime, long endTime)
+    private void WriteStatisticsV4(Stream stream, TsDataType dataType, long count, long startTime, long endTime,
+        object? minValue, object? maxValue, object? firstValue, object? lastValue, double sumValue)
     {
         // Statistics format: [count:unsignedVarInt][startTime:Int64BE][endTime:Int64BE][type-specific stats]
         WriteUnsignedVarLongToStream(stream, count);
         WriteLongBigEndianToStream(stream, startTime);
         WriteLongBigEndianToStream(stream, endTime);
 
-        // Type-specific statistics (minimal: zeros for now)
         switch (dataType)
         {
             case TsDataType.Boolean:
-                // first(1) + last(1) + sum(8) = 10 bytes
-                stream.Write(new byte[10], 0, 10);
+                // first(1) + last(1) + sum(8)
+                stream.WriteByte((byte)(firstValue is true ? 1 : 0));
+                stream.WriteByte((byte)(lastValue is true ? 1 : 0));
+                WriteLongBigEndianToStream(stream, (long)sumValue);
                 break;
             case TsDataType.Int32:
             case TsDataType.Date:
-                // min(4) + max(4) + first(4) + last(4) + sum(8) = 24 bytes
-                stream.Write(new byte[24], 0, 24);
+                // min(4) + max(4) + first(4) + last(4) + sum(8)
+                WriteInt32BigEndianToStream(stream, minValue is int mi ? mi : 0);
+                WriteInt32BigEndianToStream(stream, maxValue is int ma ? ma : 0);
+                WriteInt32BigEndianToStream(stream, firstValue is int fi ? fi : 0);
+                WriteInt32BigEndianToStream(stream, lastValue is int la ? la : 0);
+                WriteDoubleBigEndianToStream(stream, sumValue);
                 break;
             case TsDataType.Int64:
             case TsDataType.Timestamp:
-                // min(8) + max(8) + first(8) + last(8) + sum(8) = 40 bytes
-                stream.Write(new byte[40], 0, 40);
+                // min(8) + max(8) + first(8) + last(8) + sum(8)
+                WriteLongBigEndianToStream(stream, minValue is long mni ? mni : 0L);
+                WriteLongBigEndianToStream(stream, maxValue is long mxa ? mxa : 0L);
+                WriteLongBigEndianToStream(stream, firstValue is long fli ? fli : 0L);
+                WriteLongBigEndianToStream(stream, lastValue is long lla ? lla : 0L);
+                WriteDoubleBigEndianToStream(stream, sumValue);
                 break;
             case TsDataType.Float:
-                // min(4) + max(4) + first(4) + last(4) + sum(8) = 24 bytes
-                stream.Write(new byte[24], 0, 24);
+                // min(4) + max(4) + first(4) + last(4) + sum(8)
+                WriteFloatBigEndianToStream(stream, minValue is float fmn ? fmn : 0f);
+                WriteFloatBigEndianToStream(stream, maxValue is float fmx ? fmx : 0f);
+                WriteFloatBigEndianToStream(stream, firstValue is float ff ? ff : 0f);
+                WriteFloatBigEndianToStream(stream, lastValue is float fl ? fl : 0f);
+                WriteDoubleBigEndianToStream(stream, sumValue);
                 break;
             case TsDataType.Double:
-                // min(8) + max(8) + first(8) + last(8) + sum(8) = 40 bytes
-                stream.Write(new byte[40], 0, 40);
+                // min(8) + max(8) + first(8) + last(8) + sum(8)
+                WriteDoubleBigEndianToStream(stream, minValue is double dmn ? dmn : 0.0);
+                WriteDoubleBigEndianToStream(stream, maxValue is double dmx ? dmx : 0.0);
+                WriteDoubleBigEndianToStream(stream, firstValue is double df ? df : 0.0);
+                WriteDoubleBigEndianToStream(stream, lastValue is double dl ? dl : 0.0);
+                WriteDoubleBigEndianToStream(stream, sumValue);
                 break;
             case TsDataType.Text:
             case TsDataType.String:
+            {
                 // first: [len:Int32BE][bytes], last: [len:Int32BE][bytes]
-                // Empty strings: len=0
-                WriteInt32BigEndianToStream(stream, 0);
-                WriteInt32BigEndianToStream(stream, 0);
+                var firstBytes = firstValue is string fs ? System.Text.Encoding.UTF8.GetBytes(fs) : Array.Empty<byte>();
+                WriteInt32BigEndianToStream(stream, firstBytes.Length);
+                if (firstBytes.Length > 0) stream.Write(firstBytes, 0, firstBytes.Length);
+                var lastBytes = lastValue is string ls ? System.Text.Encoding.UTF8.GetBytes(ls) : Array.Empty<byte>();
+                WriteInt32BigEndianToStream(stream, lastBytes.Length);
+                if (lastBytes.Length > 0) stream.Write(lastBytes, 0, lastBytes.Length);
                 break;
+            }
             case TsDataType.Blob:
                 // 0 bytes
                 break;
         }
+    }
+
+    private static object? AggregateMin(object? a, object? b, TsDataType dataType)
+    {
+        if (a == null) return b;
+        if (b == null) return a;
+        return dataType switch
+        {
+            TsDataType.Int32 or TsDataType.Date => Math.Min((int)a, (int)b),
+            TsDataType.Int64 or TsDataType.Timestamp => Math.Min((long)a, (long)b),
+            TsDataType.Float => Math.Min((float)a, (float)b),
+            TsDataType.Double => Math.Min((double)a, (double)b),
+            _ => a
+        };
+    }
+
+    private static object? AggregateMax(object? a, object? b, TsDataType dataType)
+    {
+        if (a == null) return b;
+        if (b == null) return a;
+        return dataType switch
+        {
+            TsDataType.Int32 or TsDataType.Date => Math.Max((int)a, (int)b),
+            TsDataType.Int64 or TsDataType.Timestamp => Math.Max((long)a, (long)b),
+            TsDataType.Float => Math.Max((float)a, (float)b),
+            TsDataType.Double => Math.Max((double)a, (double)b),
+            _ => a
+        };
     }
 
     private static void WriteLongBigEndianToStream(Stream stream, long value)
@@ -824,6 +971,16 @@ public class TsFileWriter : IDisposable
         stream.WriteByte((byte)(value >> 16));
         stream.WriteByte((byte)(value >> 8));
         stream.WriteByte((byte)value);
+    }
+
+    private static void WriteFloatBigEndianToStream(Stream stream, float value)
+    {
+        WriteInt32BigEndianToStream(stream, BitConverter.SingleToInt32Bits(value));
+    }
+
+    private static void WriteDoubleBigEndianToStream(Stream stream, double value)
+    {
+        WriteLongBigEndianToStream(stream, BitConverter.DoubleToInt64Bits(value));
     }
     
     private void WriteFooter()
@@ -897,7 +1054,7 @@ public class TsFileWriter : IDisposable
 
         if (!_closed)
         {
-            try { Close(); } catch { /* best-effort during dispose */ }
+            Close();
         }
 
         _writer?.Dispose();
@@ -932,5 +1089,10 @@ public class TsFileWriter : IDisposable
         public long Count { get; set; }
         public long StartTime { get; set; }
         public long EndTime { get; set; }
+        public object? MinValue { get; set; }
+        public object? MaxValue { get; set; }
+        public object? FirstValue { get; set; }
+        public object? LastValue { get; set; }
+        public double SumValue { get; set; }
     }
 }

@@ -198,7 +198,7 @@ public class GorillaV1Decoder : IDecoder
             
             return (preValue, false);
         }
-        catch
+        catch (Exception ex) when (ex is IndexOutOfRangeException or InvalidOperationException or ArgumentOutOfRangeException)
         {
             return (preValue, true);
         }
@@ -288,7 +288,7 @@ public class GorillaV1Decoder : IDecoder
             
             return (preValue, false);
         }
-        catch
+        catch (Exception ex) when (ex is IndexOutOfRangeException or InvalidOperationException or ArgumentOutOfRangeException)
         {
             return (preValue, true);
         }
