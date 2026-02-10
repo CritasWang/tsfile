@@ -128,7 +128,7 @@ namespace Apache.TsFile.Encoding.Encoder
             }
 
             // Bit-pack deltas into encodingBlockBuffer
-            int encodingLength = (int)Math.Ceiling(packNum * packWidth / 8.0);
+            int encodingLength = (int)Math.Ceiling((long)packNum * packWidth / 8.0);
             byte[] encodingBlockBuffer = new byte[encodingLength];
             for (int i = 0; i < packNum; i++)
                 LongToBytes(_deltaBlockBuffer[i], encodingBlockBuffer, packWidth * i, packWidth);

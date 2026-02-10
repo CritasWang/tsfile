@@ -78,36 +78,13 @@ public class TsFileReader : IDisposable
         if (!_schemas!.TryGetValue(deviceName, out var schema))
             throw new ArgumentException($"Device {deviceName} not found in file");
 
-        var result = new QueryResult(deviceName, schema);
-
-        if (_fileVersion == TsFileConstants.JavaVersion4)
+        // Simplified C# V3 files have no index nodes - use chunk scanning
+        if (_tableIndexNodes == null || _tableIndexNodes.Count == 0)
         {
-            return QueryV4(deviceName, schema, measurements, startTime, endTime);
+            return QueryV3Simplified(deviceName, schema, measurements, startTime, endTime);
         }
 
-        // Read chunks for this device (v3 format)
-        _fileStream.Position = TsFileConstants.MagicString.Length + 1; // Skip header
-
-        while (_fileStream.Position < _metadataOffset)
-        {
-            var marker = _reader.ReadByte();
-            if (marker != TsFileConstants.ChunkHeaderMarker)
-                break;
-
-            var chunkDeviceName = _reader.ReadString();
-
-            if (chunkDeviceName == deviceName)
-            {
-                ReadChunk(result, schema, measurements, startTime, endTime);
-            }
-            else
-            {
-                // Skip this chunk
-                SkipChunk(schema);
-            }
-        }
-
-        return result;
+        return QueryV4(deviceName, schema, measurements, startTime, endTime);
     }
     
     /// <summary>
@@ -133,66 +110,161 @@ public class TsFileReader : IDisposable
     
     private void ReadMetadata()
     {
-        if (_fileVersion == TsFileConstants.JavaVersion4)
-        {
-            ReadMetadataV4();
-        }
-        else
+        if (_fileVersion == TsFileConstants.Version)
         {
             ReadMetadataV3();
         }
+        else
+        {
+            ReadMetadataV4();
+        }
     }
-    
-    private void ReadMetadataV3()
+
+    private void ReadMetadataV4()
     {
-        // v3 format: [metadata_offset: 8 bytes][MAGIC: 6 bytes]
-        _fileStream.Seek(-8 - TsFileConstants.MagicString.Length, SeekOrigin.End);
-        _metadataOffset = _reader.ReadInt64();
-        
-        // Validate footer magic string
+        // Java V4 footer: [TsFileMetadata][metadataSize: Int32BE][MAGIC: 6 bytes]
+        _fileStream.Seek(-4 - TsFileConstants.MagicString.Length, SeekOrigin.End);
+        var metadataSize = ReadInt32BigEndian(_reader);
+
         var footerMagic = _reader.ReadBytes(TsFileConstants.MagicString.Length);
         if (!footerMagic.SequenceEqual(TsFileConstants.MagicString))
             throw new InvalidDataException("Invalid TSFile footer magic string");
-        
-        // Read schemas from metadata
+
+        var metadataEndPos = _fileStream.Length - 4 - TsFileConstants.MagicString.Length;
+        var metadataStartPos = metadataEndPos - metadataSize;
+
+        _fileStream.Position = metadataStartPos;
+        ReadTsFileMetadataV4();
+    }
+
+    private void ReadMetadataV3()
+    {
+        // Validate footer magic
+        _fileStream.Seek(-TsFileConstants.MagicString.Length, SeekOrigin.End);
+        var footerMagic = _reader.ReadBytes(TsFileConstants.MagicString.Length);
+        if (!footerMagic.SequenceEqual(TsFileConstants.MagicString))
+            throw new InvalidDataException("Invalid TSFile footer magic string");
+
+        // Try Java V3 footer: [TsFileMetadata][metadataSize: Int32BE][MAGIC]
+        // Read the 4 bytes before MAGIC as potential metadataSize
+        _fileStream.Seek(-4 - TsFileConstants.MagicString.Length, SeekOrigin.End);
+        var potentialMetadataSize = ReadInt32BigEndian(_reader);
+        var metadataEndPos = _fileStream.Length - 4 - TsFileConstants.MagicString.Length;
+        var metadataStartPos = metadataEndPos - potentialMetadataSize;
+
+        if (potentialMetadataSize > 0 && metadataStartPos > TsFileConstants.MagicString.Length + 1)
+        {
+            try
+            {
+                _fileStream.Position = metadataStartPos;
+                ReadTsFileMetadataV3Java();
+                return;
+            }
+            catch
+            {
+                // Not Java V3 format, try C# simplified format
+            }
+        }
+
+        // C# simplified V3 footer: [metadata][metadataOffset: Int64LE][MAGIC]
+        _fileStream.Seek(-8 - TsFileConstants.MagicString.Length, SeekOrigin.End);
+        _metadataOffset = _reader.ReadInt64();
         _fileStream.Position = _metadataOffset;
-        var schemaCount = _reader.ReadInt32();
-        
+        ReadTsFileMetadataV3Simplified();
+    }
+    
+    private void ReadTsFileMetadataV3Java()
+    {
+        // Java V3 metadata structure (from Java CompatibilityUtils.deserializeTsFileMetadataFromV3):
+        // 1. Single MetadataIndexNode (device-level, using PlainDeviceID)
+        // 2. metaOffset: Int64 (big-endian)
+        // 3. bloomFilter (optional): [Int32BE(bytesLength)][bytes][uVarInt(filterSize)][uVarInt(hashFunctionSize)]
+
+        // 1. Read single MetadataIndexNode (V3 uses PlainDeviceID for device entries)
+        var indexNode = ReadMetadataIndexNodeV3(isDeviceLevel: true);
+        _tableIndexNodes = new Dictionary<string, MetadataIndexNode>();
+        // V3 stores the single index node under empty string key (same as Java)
+        _tableIndexNodes[""] = indexNode;
+
+        // V3 has no tableSchemaMap - create virtual schemas from index nodes
         _schemas = new Dictionary<string, TableSchema>();
+
+        // Extract device names from the index tree and create virtual schemas
+        var deviceNames = new HashSet<string>();
+        CollectDeviceNames(indexNode, deviceNames);
+        foreach (var deviceName in deviceNames)
+        {
+            // Use the full device path as table name for V3 tree model
+            if (!_schemas.ContainsKey(deviceName))
+            {
+                var schema = new TableSchema(deviceName);
+                _schemas[deviceName] = schema;
+            }
+        }
+
+        // If no devices found (e.g., single measurement node), use empty key
+        if (_schemas.Count == 0)
+        {
+            _schemas[""] = new TableSchema("default");
+        }
+
+        // 2. Read metadata offset
+        _metadataOffset = ReadInt64BigEndian(_reader);
+
+        // 3. Skip bloom filter if present (V3 uses Int32BE-prefixed bytes)
+        if (_fileStream.Position < _fileStream.Length - 10)
+        {
+            var bloomFilterBytesLength = ReadInt32BigEndian(_reader);
+            if (bloomFilterBytesLength > 0 && bloomFilterBytesLength < TsFileConstants.MaxBloomFilterSize)
+            {
+                _reader.ReadBytes(bloomFilterBytesLength);
+                ReadUnsignedVarInt(); // filterSize
+                ReadUnsignedVarInt(); // hashFunctionSize
+            }
+        }
+    }
+
+    private void ReadTsFileMetadataV3Simplified()
+    {
+        // Simplified C# V3 format:
+        // [Int32LE(schemaCount)][schemas...][Int64LE(metadataOffset)]
+        var schemaCount = _reader.ReadInt32();
+
+        _schemas = new Dictionary<string, TableSchema>();
+        _tableIndexNodes = new Dictionary<string, MetadataIndexNode>();
+
         for (int i = 0; i < schemaCount; i++)
         {
             var schema = TableSchema.Deserialize(_reader);
             _schemas[schema.TableName] = schema;
         }
+
+        _metadataOffset = _reader.ReadInt64();
     }
-    
-    private void ReadMetadataV4()
+
+    private void CollectDeviceNames(MetadataIndexNode node, HashSet<string> deviceNames)
     {
-        // v4 format: [TsFileMetadata_size: 4 bytes][MAGIC: 6 bytes]
-        // The metadata offset is stored inside TsFileMetadata
-        
-        // NOTE: V4 metadata structure is complex. This implementation provides
-        // basic schema reading functionality. Full v4 support with data reading
-        // may require additional implementation.
-        
-        // Read TsFileMetadata size from footer
-        _fileStream.Seek(-4 - TsFileConstants.MagicString.Length, SeekOrigin.End);
-        var metadataSize = ReadInt32BigEndian(_reader);
-        
-        // Validate footer magic string
-        var footerMagic = _reader.ReadBytes(TsFileConstants.MagicString.Length);
-        if (!footerMagic.SequenceEqual(TsFileConstants.MagicString))
-            throw new InvalidDataException("Invalid TSFile footer magic string");
-        
-        // Calculate position of TsFileMetadata start
-        var metadataEndPos = _fileStream.Length - 4 - TsFileConstants.MagicString.Length;
-        var metadataStartPos = metadataEndPos - metadataSize;
-        
-        // Read TsFileMetadata
-        _fileStream.Position = metadataStartPos;
-        ReadTsFileMetadataV4();
+        foreach (var entry in node.Entries)
+        {
+            if (entry is DeviceMetadataIndexEntry deviceEntry)
+            {
+                deviceNames.Add(deviceEntry.DeviceID.ToString() ?? "");
+            }
+        }
     }
-    
+
+    private MetadataIndexNode ReadMetadataIndexNodeV3(bool isDeviceLevel)
+    {
+        return MetadataIndexNode.DeserializeV3(_reader, isDeviceLevel, ReadUnsignedVarInt, ReadVarIntString, () => ReadInt64BigEndian(_reader));
+    }
+
+    private MetadataIndexNode ReadMetadataIndexNodeForVersion(bool isDeviceLevel)
+    {
+        if (_fileVersion == TsFileConstants.Version)
+            return ReadMetadataIndexNodeV3(isDeviceLevel);
+        return ReadMetadataIndexNodeV4(isDeviceLevel);
+    }
+
     private void ReadTsFileMetadataV4()
     {
         // V4 metadata structure (from Java TsFileMetadata.deserializeFrom):
@@ -379,6 +451,8 @@ public class TsFileReader : IDisposable
     {
         // Read variable-length string (similar to ReadWriteIOUtils.readVarIntString)
         var length = ReadVarInt();
+        if (length <= 0)
+            return string.Empty;
         var bytes = _reader.ReadBytes(length);
         return System.Text.Encoding.UTF8.GetString(bytes);
     }
@@ -643,6 +717,39 @@ public class TsFileReader : IDisposable
              | buffer[offset + 7];
     }
 
+    #region V3 Simplified Query (C#-written V3 files)
+
+    private QueryResult QueryV3Simplified(string deviceName, TableSchema schema, string[]? measurements,
+        long? startTime, long? endTime)
+    {
+        var result = new QueryResult(deviceName, schema);
+
+        // Scan chunks from data start
+        _fileStream.Position = TsFileConstants.MagicString.Length + 1; // Skip header
+
+        while (_fileStream.Position < _metadataOffset)
+        {
+            var marker = _reader.ReadByte();
+            if (marker != TsFileConstants.ChunkHeaderMarker)
+                break;
+
+            var chunkDeviceName = _reader.ReadString();
+
+            if (chunkDeviceName == deviceName)
+            {
+                ReadChunk(result, schema, measurements, startTime, endTime);
+            }
+            else
+            {
+                SkipChunk(schema);
+            }
+        }
+
+        return result;
+    }
+
+    #endregion
+
     #region V4 Query Implementation
 
     private QueryResult QueryV4(string deviceName, TableSchema schema, string[]? measurements,
@@ -650,16 +757,22 @@ public class TsFileReader : IDisposable
     {
         var result = new QueryResult(deviceName, schema);
 
-        // Get table name from device name (for V4, deviceName is the table name)
-        var tableName = deviceName;
-        if (!_tableIndexNodes!.TryGetValue(tableName, out var rootNode))
+        MetadataIndexNode? rootNode;
+        if (_fileVersion == TsFileConstants.Version)
         {
-            // Device not found in index
-            return result;
+            // V3: single root index node stored under empty key
+            if (!_tableIndexNodes!.TryGetValue("", out rootNode))
+                return result;
+        }
+        else
+        {
+            // V4: table name is the device name
+            if (!_tableIndexNodes!.TryGetValue(deviceName, out rootNode))
+                return result;
         }
 
         // Navigate to find timeseries metadata for this device
-        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, tableName, measurements);
+        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, deviceName, measurements);
 
         // For Tree Model files (no table schemas), dynamically populate measurements from TimeseriesMetadata
         if (schema.Measurements.Count == 0)
@@ -692,32 +805,79 @@ public class TsFileReader : IDisposable
     }
 
     private List<TimeseriesMetadataV4> NavigateToTimeseriesMetadata(MetadataIndexNode rootNode,
-        string tableName, string[]? measurements)
+        string deviceName, string[]? measurements)
     {
         var result = new List<TimeseriesMetadataV4>();
         var measurementFilter = measurements?.ToHashSet();
 
-        // For leaf device nodes, entries point to measurement index nodes
-        if (rootNode.NodeType == MetadataIndexNodeType.LeafDevice)
-        {
-            foreach (var entry in rootNode.Entries)
-            {
-                if (entry is DeviceMetadataIndexEntry deviceEntry)
-                {
-                    // Read measurement index node at this offset
-                    _fileStream.Position = deviceEntry.Offset;
-                    var measurementNode = ReadMetadataIndexNodeV4(isDeviceLevel: false);
-                    ReadTimeseriesMetadataFromNode(measurementNode, result, measurementFilter);
-                }
-            }
-        }
-        else if (rootNode.NodeType == MetadataIndexNodeType.LeafMeasurement)
-        {
-            // Direct measurement entries
-            ReadTimeseriesMetadataFromNode(rootNode, result, measurementFilter);
-        }
+        // For V3, deviceName is the full device path (e.g., "root.test.d0")
+        // We need to filter to the specific device in the index tree
+        string? deviceFilter = (_fileVersion == TsFileConstants.Version) ? deviceName : null;
+
+        NavigateNode(rootNode, result, measurementFilter, deviceFilter);
 
         return result;
+    }
+
+    private void NavigateNode(MetadataIndexNode node, List<TimeseriesMetadataV4> result,
+        HashSet<string>? measurementFilter, string? deviceFilter)
+    {
+        switch (node.NodeType)
+        {
+            case MetadataIndexNodeType.InternalDevice:
+                // Internal device node: entries point to child device nodes
+                foreach (var entry in node.Entries)
+                {
+                    if (entry is DeviceMetadataIndexEntry deviceEntry)
+                    {
+                        _fileStream.Position = deviceEntry.Offset;
+                        var childNode = ReadMetadataIndexNodeForVersion(isDeviceLevel: true);
+                        NavigateNode(childNode, result, measurementFilter, deviceFilter);
+                    }
+                }
+                break;
+
+            case MetadataIndexNodeType.LeafDevice:
+                // Leaf device node: entries point to measurement index nodes
+                foreach (var entry in node.Entries)
+                {
+                    if (entry is DeviceMetadataIndexEntry deviceEntry)
+                    {
+                        // For V3, filter to the specific device being queried
+                        if (deviceFilter != null)
+                        {
+                            var entryDeviceName = deviceEntry.DeviceID.ToString();
+                            if (entryDeviceName != deviceFilter)
+                                continue;
+                        }
+
+                        _fileStream.Position = deviceEntry.Offset;
+                        var measurementNode = ReadMetadataIndexNodeForVersion(isDeviceLevel: false);
+                        NavigateNode(measurementNode, result, measurementFilter, deviceFilter);
+                    }
+                }
+                break;
+
+            case MetadataIndexNodeType.InternalMeasurement:
+                // Internal measurement node: entries point to child measurement nodes
+                foreach (var entry in node.Entries)
+                {
+                    if (entry is MeasurementMetadataIndexEntry measurementEntry)
+                    {
+                        if (measurementFilter != null && !measurementFilter.Contains(measurementEntry.Name))
+                            continue;
+                        _fileStream.Position = measurementEntry.Offset;
+                        var childNode = ReadMetadataIndexNodeForVersion(isDeviceLevel: false);
+                        NavigateNode(childNode, result, measurementFilter, deviceFilter);
+                    }
+                }
+                break;
+
+            case MetadataIndexNodeType.LeafMeasurement:
+                // Leaf measurement node: entries point to TimeseriesMetadata
+                ReadTimeseriesMetadataFromNode(node, result, measurementFilter);
+                break;
+        }
     }
 
     private void ReadTimeseriesMetadataFromNode(MetadataIndexNode node, List<TimeseriesMetadataV4> result,
@@ -768,14 +928,21 @@ public class TsFileReader : IDisposable
         // Read chunk header marker
         var marker = _reader.ReadByte();
         
-        // Handle ChunkGroupHeader (marker 0x00) in tree model V4 files
-        // ChunkGroupHeader format: [marker:0x00][deviceID: unsignedVarInt(segCount) + VarIntString(segments)...]
+        // Handle ChunkGroupHeader (marker 0x00) in tree model files
         if (marker == 0x00)
         {
-            // Skip device ID (StringArrayDeviceID)
-            var segCount = ReadUnsignedVarInt();
-            for (int i = 0; i < segCount; i++)
+            if (_fileVersion == TsFileConstants.Version)
+            {
+                // V3: PlainDeviceID is just a VarIntString
                 ReadVarIntString();
+            }
+            else
+            {
+                // V4: StringArrayDeviceID = unsignedVarInt(segCount) + VarIntString(segments)...
+                var segCount = ReadUnsignedVarInt();
+                for (int i = 0; i < segCount; i++)
+                    ReadVarIntString();
+            }
             // Read the actual chunk header marker
             marker = _reader.ReadByte();
         }

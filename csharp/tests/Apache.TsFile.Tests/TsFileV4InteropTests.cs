@@ -812,8 +812,13 @@ public class TsFileV4InteropTests
         int successCount = 0;
         var errors = new List<string>();
 
+        Console.WriteLine($"{'=',-80}");
+        Console.WriteLine($"V3 Interop Test: Reading {v3Files.Length} Java V3 files from {javaV3Dir}");
+        Console.WriteLine($"{'=',-80}");
+
         foreach (var file in v3Files)
         {
+            var fileName = Path.GetFileName(file);
             try
             {
                 using var reader = new TsFileReader(file);
@@ -824,26 +829,72 @@ public class TsFileV4InteropTests
                 // Verify schemas are loaded
                 Assert.NotEmpty(reader.Schemas);
 
+                Console.WriteLine($"\n  ✓ {fileName}");
+                Console.WriteLine($"    Version: {reader.FileVersion}");
+                Console.WriteLine($"    Schemas: {reader.Schemas.Count}");
+
+                foreach (var kvp in reader.Schemas)
+                {
+                    var schemaName = kvp.Key;
+                    var schema = kvp.Value;
+                    Console.WriteLine($"    Device/Table: \"{schemaName}\"");
+                    Console.WriteLine($"      Measurements: {schema.Measurements.Count}");
+                    foreach (var m in schema.Measurements)
+                    {
+                        Console.WriteLine($"        - {m.MeasurementName} ({m.DataType}/{m.Encoding}/{m.Compression})");
+                    }
+
+                    // Query data for this device
+                    try
+                    {
+                        var result = reader.Query(schemaName);
+                        Console.WriteLine($"      Rows: {result.Timestamps.Count}");
+
+                        if (result.Timestamps.Count > 0)
+                        {
+                            var sampleCount = Math.Min(5, result.Timestamps.Count);
+                            Console.WriteLine($"      Sample data (first {sampleCount} rows):");
+                            for (int i = 0; i < sampleCount; i++)
+                            {
+                                var vals = new List<string> { $"t={result.Timestamps[i]}" };
+                                foreach (var mkvp in result.MeasurementData)
+                                {
+                                    var v = mkvp.Value[i];
+                                    vals.Add($"{mkvp.Key}={FormatValue(v)}");
+                                }
+                                Console.WriteLine($"        [{string.Join(", ", vals)}]");
+                            }
+                            if (result.Timestamps.Count > sampleCount)
+                                Console.WriteLine($"        ... ({result.Timestamps.Count} rows total)");
+                        }
+                    }
+                    catch (Exception qex)
+                    {
+                        Console.WriteLine($"      Query error: {qex.Message}");
+                    }
+                }
+
                 successCount++;
             }
             catch (Exception ex)
             {
-                errors.Add($"{Path.GetFileName(file)}: {ex.Message}");
+                Console.WriteLine($"\n  ✗ {fileName}: {ex.Message}");
+                errors.Add($"{fileName}: {ex.Message}");
             }
         }
 
-        // Report results
+        Console.WriteLine($"\n{'=',-80}");
         Console.WriteLine($"V3 compatibility: {successCount}/{v3Files.Length} files readable");
         if (errors.Count > 0)
         {
-            Console.WriteLine($"Errors: {string.Join(", ", errors.Take(3))}");
+            Console.WriteLine($"Errors ({errors.Count}):");
+            foreach (var err in errors)
+                Console.WriteLine($"  - {err}");
         }
+        Console.WriteLine($"{'=',-80}\n");
 
-        // V3 reading is not yet implemented in C# - report results without failing
-        if (successCount == 0)
-        {
-            Console.WriteLine("V3 format reading not yet implemented in C# TsFileReader");
-        }
+        Assert.True(successCount >= v3Files.Length * 0.8,
+            $"Should read at least 80% of V3 files. Success: {successCount}/{v3Files.Length}");
     }
 
     /// <summary>

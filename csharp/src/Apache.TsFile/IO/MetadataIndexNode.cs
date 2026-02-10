@@ -146,6 +146,37 @@ public class MetadataIndexNode
     }
     
     /// <summary>
+    /// Deserializes a metadata index node from a binary stream (V3 format).
+    /// V3 uses PlainDeviceID (VarIntString) for device entries instead of StringArrayDeviceID.
+    /// </summary>
+    public static MetadataIndexNode DeserializeV3(BinaryReader reader, bool isDeviceLevel,
+        Func<int> readUnsignedVarInt, Func<string> readVarIntString, Func<long> readLong)
+    {
+        var entries = new List<IMetadataIndexEntry>();
+        int size = readUnsignedVarInt();
+
+        for (int i = 0; i < size; i++)
+        {
+            if (isDeviceLevel)
+            {
+                // V3 uses PlainDeviceID (just a VarIntString)
+                var entry = DeviceMetadataIndexEntry.DeserializeV3(readVarIntString, readLong);
+                entries.Add(entry);
+            }
+            else
+            {
+                var entry = MeasurementMetadataIndexEntry.Deserialize(reader, readVarIntString, readLong);
+                entries.Add(entry);
+            }
+        }
+
+        var endOffset = readLong();
+        var nodeType = (MetadataIndexNodeType)reader.ReadByte();
+
+        return new MetadataIndexNode(entries, endOffset, nodeType);
+    }
+
+    /// <summary>
     /// Deserializes a metadata index node from a binary stream (V4 format).
     /// </summary>
     public static MetadataIndexNode DeserializeV4(BinaryReader reader, bool isDeviceLevel,

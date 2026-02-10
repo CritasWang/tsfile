@@ -84,6 +84,19 @@ public class DeviceMetadataIndexEntry : IMetadataIndexEntry
         var offset = readLong();
         return new DeviceMetadataIndexEntry(deviceID, offset);
     }
+
+    /// <summary>
+    /// Deserializes a V3 device metadata index entry where device ID is a PlainDeviceID (VarIntString).
+    /// </summary>
+    public static DeviceMetadataIndexEntry DeserializeV3(Func<string> readVarIntString, Func<long> readLong)
+    {
+        // V3 uses PlainDeviceID which is just a VarIntString
+        var deviceIdString = readVarIntString();
+        // Convert PlainDeviceID to StringArrayDeviceID (same as Java's convertToStringArrayDeviceId)
+        var deviceID = new StringArrayDeviceID(deviceIdString);
+        var offset = readLong();
+        return new DeviceMetadataIndexEntry(deviceID, offset);
+    }
     
     public override string ToString() => $"<{DeviceID},{Offset}>";
     

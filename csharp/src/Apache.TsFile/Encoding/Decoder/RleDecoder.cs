@@ -234,27 +234,26 @@ public class RleDecoder : IDecoder
         {
             for (int i = 0; i < count; i++)
                 _longQueue.Enqueue(0);
+            offset += bitWidth;
             return;
         }
         
+        // Use bit-by-bit extraction to avoid overflow for wide bit widths (>56)
         int byteIdx = offset;
-        // Use BigInteger-like accumulation for wide bit widths
-        long buf = 0;
-        int totalBits = 0;
+        int bitIdx = 0; // bit position within current byte (0=MSB, 7=LSB)
         
         for (int i = 0; i < count; i++)
         {
-            while (totalBits < bitWidth)
+            long value = 0;
+            for (int b = 0; b < bitWidth; b++)
             {
-                buf = (buf << 8) | (buffer[byteIdx] & 0xFF);
-                byteIdx++;
-                totalBits += 8;
+                value <<= 1;
+                int bytePos = byteIdx + (bitIdx >> 3);
+                int bitPos = 7 - (bitIdx & 7);
+                if (bytePos < buffer.Length && ((buffer[bytePos] >> bitPos) & 1) == 1)
+                    value |= 1;
+                bitIdx++;
             }
-            
-            long value = (buf >> (totalBits - bitWidth));
-            totalBits -= bitWidth;
-            buf = buf & ((1L << totalBits) - 1);
-            
             _longQueue.Enqueue(value);
         }
         

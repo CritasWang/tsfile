@@ -467,6 +467,7 @@ run_full_interop_tests() {
     # Exclude GenerateCSharpV4FilesForJavaInterop as it was already run in Step 3
     dotnet test csharp/tests/Apache.TsFile.Tests/Apache.TsFile.Tests.csproj \
         --configuration Release \
+        --no-build \
         --filter "FullyQualifiedName!~GenerateCSharpV4FilesForJavaInterop" \
         --verbosity normal
 

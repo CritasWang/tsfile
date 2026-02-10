@@ -38,6 +38,7 @@ public class TsFileWriter : IDisposable
     private readonly Dictionary<string, MemoryStream> _deviceChunkBuffers;
     private readonly List<ChunkGroupInfo> _chunkGroups;
     private bool _disposed;
+    private bool _closed;
     private bool _headerWritten;
     private long _dataStartPosition;
 
@@ -173,8 +174,9 @@ public class TsFileWriter : IDisposable
     /// </summary>
     public void Close()
     {
-        if (_disposed)
+        if (_closed || _disposed)
             return;
+        _closed = true;
 
         // Flush all device buffers
         foreach (var deviceName in _schemas.Keys.ToList())
@@ -195,7 +197,6 @@ public class TsFileWriter : IDisposable
         // Write footer
         WriteFooter();
 
-        Dispose();
     }
     
     private void WriteHeader()
@@ -482,6 +483,16 @@ public class TsFileWriter : IDisposable
         }
         stream.WriteByte((byte)value);
     }
+
+    private static void WriteUnsignedVarLongToStream(Stream stream, long value)
+    {
+        while ((value & ~0x7FL) != 0)
+        {
+            stream.WriteByte((byte)((value & 0x7F) | 0x80));
+            value = (long)((ulong)value >> 7);
+        }
+        stream.WriteByte((byte)value);
+    }
     
     private void EncodeColumn(IEncoder encoder, Tablet tablet, int columnIndex, MemoryStream stream)
     {
@@ -753,7 +764,7 @@ public class TsFileWriter : IDisposable
     private void WriteStatisticsV4(Stream stream, TsDataType dataType, long count, long startTime, long endTime)
     {
         // Statistics format: [count:unsignedVarInt][startTime:Int64BE][endTime:Int64BE][type-specific stats]
-        WriteUnsignedVarIntToStream(stream, (int)count);
+        WriteUnsignedVarLongToStream(stream, count);
         WriteLongBigEndianToStream(stream, startTime);
         WriteLongBigEndianToStream(stream, endTime);
 
@@ -883,6 +894,11 @@ public class TsFileWriter : IDisposable
     {
         if (_disposed)
             return;
+
+        if (!_closed)
+        {
+            try { Close(); } catch { /* best-effort during dispose */ }
+        }
 
         _writer?.Dispose();
         _fileStream?.Dispose();

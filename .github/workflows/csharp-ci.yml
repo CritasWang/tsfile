@@ -226,14 +226,21 @@ jobs:
           echo "=== Java reading C# V4 files ==="
           success=0
           fail=0
-          for file in /tmp/interop-tests/csharp-v4/*.tsfile; do
+          shopt -s nullglob
+          files=(/tmp/interop-tests/csharp-v4/*.tsfile)
+          shopt -u nullglob
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No C# V4 files found to validate"
+            exit 0
+          fi
+          for file in "${files[@]}"; do
             echo "Validating: $(basename $file)"
             if mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.CSharpFileValidator" -Dexec.args="$file" -q 2>&1; then
               echo "  ✓ Validation passed"
-              ((success++))
+              success=$((success + 1))
             else
               echo "  ✗ Validation failed"
-              ((fail++))
+              fail=$((fail + 1))
             fi
           done
           echo ""
