@@ -30,11 +30,12 @@ mvn install:install-file -Dfile="$SCRIPT_DIR/java/pom.xml" \
     -Dpackaging=pom -q
 # Create full jar from compiled classes and install to local repo
 # Merge common module classes since OSGi bundle plugin normally inlines them
-rm -rf /tmp/tsfile-combined && mkdir -p /tmp/tsfile-combined
-cp -r "$SCRIPT_DIR/java/common/target/classes"/* /tmp/tsfile-combined/
-cp -r "$SCRIPT_DIR/java/tsfile/target/classes"/* /tmp/tsfile-combined/
+COMBINED_DIR=$(mktemp -d)
+cp -r "$SCRIPT_DIR/java/common/target/classes"/* "$COMBINED_DIR"/
+cp -r "$SCRIPT_DIR/java/tsfile/target/classes"/* "$COMBINED_DIR"/
 jar cf "$SCRIPT_DIR/java/tsfile/target/tsfile-2.2.1-SNAPSHOT.jar" \
-    -C /tmp/tsfile-combined .
+    -C "$COMBINED_DIR" .
+rm -rf "$COMBINED_DIR"
 mvn install:install-file \
     -Dfile="$SCRIPT_DIR/java/tsfile/target/tsfile-2.2.1-SNAPSHOT.jar" \
     -DgroupId=org.apache.tsfile -DartifactId=tsfile -Dversion=2.2.1-SNAPSHOT \
