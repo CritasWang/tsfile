@@ -200,9 +200,11 @@ public class TsFileWriter : IDisposable
         // Write footer
         WriteFooter();
 
-        // Ensure all data is written to disk
+        // Ensure all data is written to disk and close streams
         _writer.Flush();
         _fileStream.Flush();
+        _writer.Dispose();
+        _fileStream.Dispose();
 
     }
     
