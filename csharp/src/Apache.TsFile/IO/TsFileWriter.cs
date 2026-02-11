@@ -206,6 +206,15 @@ public class TsFileWriter : IDisposable
         _writer.Dispose();
         _fileStream.Dispose();
 
+        // Clean up device buffers
+        foreach (var buffer in _deviceChunkBuffers.Values)
+        {
+            buffer?.Dispose();
+        }
+
+        // Mark as disposed to prevent double-dispose
+        _disposed = true;
+        GC.SuppressFinalize(this);
     }
     
     private void WriteHeader()

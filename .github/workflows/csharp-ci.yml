@@ -129,14 +129,21 @@ jobs:
           mvn install:install-file -Dfile=pom.xml \
             -DgroupId=org.apache.tsfile -DartifactId=tsfile-java -Dversion=2.2.1-SNAPSHOT \
             -Dpackaging=pom -q
-          # Create full jar from compiled classes (merge common module classes
-          # since the OSGi bundle plugin normally inlines them)
+          # Install common module jar (required by interop-tests as transitive dep)
+          jar cf common/target/common-2.2.1-SNAPSHOT.jar -C common/target/classes .
+          mvn install:install-file \
+            -Dfile=common/target/common-2.2.1-SNAPSHOT.jar \
+            -DpomFile=common/pom.xml \
+            -DgroupId=org.apache.tsfile -DartifactId=common -Dversion=2.2.1-SNAPSHOT \
+            -Dpackaging=jar -q
+          # Create full tsfile jar from compiled classes (merge common module classes
+          # since the OSGi bundle plugin normally inlines them for the uber-jar)
           COMBINED_DIR=$(mktemp -d)
           cp -r common/target/classes/* "$COMBINED_DIR"/
           cp -r tsfile/target/classes/* "$COMBINED_DIR"/
           jar cf tsfile/target/tsfile-2.2.1-SNAPSHOT.jar -C "$COMBINED_DIR" .
           rm -rf "$COMBINED_DIR"
-          # Install to local Maven repo with POM for transitive dependencies
+          # Install tsfile jar to local Maven repo with POM for transitive dependencies
           mvn install:install-file \
             -Dfile=tsfile/target/tsfile-2.2.1-SNAPSHOT.jar \
             -DpomFile=tsfile/pom.xml \
