@@ -4,29 +4,28 @@ A production-ready C# implementation of the Apache TSFile time series file forma
 
 ## 📊 Status
 
-**Version**: 1.0.0 (Production Ready)  
-**Tests**: 103 passing (+ 1 skipped)  
-**Java Compatibility**: Binary format compatible (v3 full, v4 schema reading)  
+**版本**: 1.2.0（生产就绪）  
+**测试**: 195 通过 / 1 跳过 / 0 失败  
+**Java 兼容性**: V3 + V4 格式完整读写，450+ 互操作文件验证通过  
 
-See **[STATUS.md](STATUS.md)** for comprehensive implementation status and comparison with Java.  
-See **[V4_SUPPORT_STATUS.md](V4_SUPPORT_STATUS.md)** for TsFile v4 format support details.
+详见 **[STATUS.md](STATUS.md)** 了解完整实现状态。
 
-### V4 Format Support
+### V4 格式支持
 
-- ✅ **Schema Reading**: Read table schemas from Java v4 files
-- ✅ **Column Introspection**: Identify TAG, FIELD, TIMESTAMP columns
-- ⏳ **Data Reading**: Coming in Phase 3
+- ✅ **表模型**: TAG/FIELD 列，多设备写入/查询
+- ✅ **树模型**: 对齐 + 非对齐时间序列，按设备路径查询
+- ✅ **Java 互操作**: 360 编码/压缩组合 + 90 表模型文件 + 综合互操作测试
 
 ## ✨ Features
 
 - **Full Data Type Support**: All 13 Java data types (100% compatibility)
-- **Advanced Encodings**: RLE, Gorilla, ZigZag, Dictionary, TS_2DIFF, Plain
-- **Production Compression**: LZ4, ZSTD, Snappy, GZIP, Uncompressed
-- **Binary Compatible**: Read/write files with Java implementation
+- **14/15 Encodings**: Plain, RLE, Gorilla, GorillaV1, ZigZag, Dictionary, TS_2DIFF, Diff, Bitmap, Regular, CHIMP, SPRINTZ, RLBE, Freq
+- **Production Compression**: LZ4, ZSTD, Snappy, GZIP, Uncompressed (LZMA2 read-only)
+- **V4 Table + Tree Model**: TAG/FIELD columns, aligned/non-aligned timeseries
+- **Binary Compatible**: 450+ Java interop files validated
 - **Batch Operations**: Efficient Tablet API for high throughput
-- **Cross-Platform**: Windows, Linux, macOS (.NET 10)
-- **Comprehensive Testing**: 98.6% test pass rate
-- **Complete Documentation**: 6 guides, ~2,800 lines
+- **Cross-Platform**: Windows, Linux, macOS (.NET 9/10)
+- **Comprehensive Testing**: 196 tests, 99.5% pass rate
 
 ## Installation
 
@@ -233,15 +232,22 @@ All major compression types are implemented and working:
 
 ## Encoding Support
 
-Currently implemented encodings:
+All 14 production encodings are implemented:
 
-- **Plain**: Uncompressed encoding for all data types ✅
-- **RLE**: Run-length encoding 📝 *Planned - see [ROADMAP.md](ROADMAP.md)*
-- **Gorilla**: Time-series compression 📝 *Planned - see [ROADMAP.md](ROADMAP.md)*
-- **ZigZag**: Variable-length integer encoding 📝 *Planned - see [ROADMAP.md](ROADMAP.md)*
-- **Dictionary**: Dictionary encoding for text 📝 *Planned - see [ROADMAP.md](ROADMAP.md)*
-
-All encoding types are defined in the enum. Non-implemented encodings fall back to Plain encoding for compatibility. See [ROADMAP.md](ROADMAP.md) for implementation timeline.
+- **Plain**: Default encoding for all data types ✅
+- **RLE**: Run-length encoding for Boolean, Int32, Int64 ✅
+- **Gorilla**: XOR-based compression for Float, Double, Int32 ✅
+- **GorillaV1**: Legacy Gorilla for Float, Double ✅
+- **ZigZag**: Variable-length integer encoding for Int32, Int64 ✅
+- **Dictionary**: Dictionary encoding for Text, String ✅
+- **TS_2DIFF**: Two-differential for Int32, Int64, Float, Double ✅
+- **Diff**: First-order delta for Int32, Int64 ✅
+- **Bitmap**: Bit packing for Boolean ✅
+- **Regular**: Regular interval encoding for Int64 ✅
+- **CHIMP**: Advanced XOR compression for Float, Double ✅
+- **SPRINTZ**: Sensor-optimized compression ✅
+- **RLBE**: Run-length byte encoding ✅
+- **CAMEL**: Not implemented (low priority, Double-only) ❌
 
 ## Examples
 
@@ -278,10 +284,15 @@ This C# implementation is designed to be binary-compatible with the Java impleme
 
 ### Tested Compatibility
 
-- ✅ File format version 3
-- ✅ Basic data types (Boolean, Int32, Int64, Float, Double, Text)
-- ✅ Plain encoding
-- ✅ All compression types
+- ✅ V3 format (C# simplified + Java V3)
+- ✅ V4 tree model (aligned + non-aligned, per-device query)
+- ✅ V4 table model (TAG/FIELD columns, multi-device)
+- ✅ All 13 data types
+- ✅ 14/15 encodings (all except CAMEL)
+- ✅ 5/6 compressions (LZMA2 read-only)
+- ✅ 360 encoding/compression combination files
+- ✅ 90 table model files
+- ✅ Bidirectional: C# → Java and Java → C#
 
 ## Architecture
 
@@ -308,9 +319,11 @@ Apache.TsFile/
 
 ## Limitations
 
-- Advanced encodings (RLE, Gorilla, etc.) use Plain encoding as fallback
+- CAMEL encoding not implemented (low priority)
+- LZMA2 compression is read-only
+- Gorilla Int64 encoder has known issue (decoder works)
 - Async I/O operations not yet implemented
-- Table model support is basic
+- No advanced query features (filters, aggregations)
 
 ## Performance Benchmarks
 

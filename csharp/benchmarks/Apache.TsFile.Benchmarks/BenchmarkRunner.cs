@@ -87,7 +87,7 @@ public class BenchmarkRunner
             {
                 for (int deviceIdx = 0; deviceIdx < _config.DevicesPerTable; deviceIdx++)
                 {
-                    string deviceId = $"table_{tableIdx}.0.0.{deviceIdx}";
+                    string deviceId = $"table_{tableIdx}.device_{deviceIdx}";
                     var measurements = new List<MeasurementSchema>();
 
                     for (int measIdx = 0; measIdx < _config.MeasurementsPerDevice; measIdx++)
@@ -116,7 +116,7 @@ public class BenchmarkRunner
                 {
                     for (int deviceIdx = 0; deviceIdx < _config.DevicesPerTable; deviceIdx++)
                     {
-                        string deviceId = $"table_{tableIdx}.0.0.{deviceIdx}";
+                        string deviceId = $"table_{tableIdx}.device_{deviceIdx}";
                         var measurements = new List<MeasurementSchema>();
 
                         for (int measIdx = 0; measIdx < _config.MeasurementsPerDevice; measIdx++)
@@ -168,7 +168,7 @@ public class BenchmarkRunner
             {
                 int middleDevice = _config.DevicesPerTable / 2;
                 int middleTable = _config.TableCount / 2;
-                string queryDeviceId = $"table_{middleTable}.0.0.{middleDevice}";
+                string queryDeviceId = $"table_{middleTable}.device_{middleDevice}";
 
                 var queryResult = reader.Query(queryDeviceId);
 

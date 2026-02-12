@@ -2,7 +2,9 @@
 
 ## 1. Overview
 
-Apache TSFile is a columnar storage file format designed for time series data. This document describes the C# implementation (.NET 10) that maintains full compatibility with the Java reference implementation.
+Apache TSFile is a columnar storage file format designed for time series data. This document describes the C# implementation (.NET 9/10) that maintains full compatibility with the Java reference implementation.
+
+> **当前状态**: 196 测试（195 通过），14/15 编码，5/6 压缩，V3+V4 格式完整支持，450+ Java 互操作文件验证通过。
 
 ### 1.1 Key Design Goals
 
@@ -158,11 +160,11 @@ Defines compression algorithms:
 | Compressor | Value | Compression Ratio | Speed | Notes |
 |------------|-------|-------------------|-------|-------|
 | Uncompressed | 0 | 1.0x | Fastest | No overhead |
-| Snappy | 1 | ~2-3x | Very Fast | Requires native libs |
+| Snappy | 1 | ~2-3x | Very Fast | IronSnappy（纯 C#，跨平台） |
 | Gzip | 2 | ~3-5x | Medium | Standard, portable |
 | Lz4 | 7 | ~2-3x | Very Fast | Recommended |
 | Zstd | 8 | ~3-7x | Fast | Adjustable levels |
-| Lzma2 | 9 | ~5-10x | Slow | Maximum compression |
+| Lzma2 | 9 | ~5-10x | Slow | 仅支持解压缩（读取 Java 文件） |
 
 ## 4. File Format
 
@@ -572,30 +574,34 @@ Exception
 - **Compression Ratio**: Measure size reduction
 - **Memory Usage**: Monitor memory consumption
 
-## 13. Future Enhancements
+## 13. 当前状态与未来增强
 
-### 13.1 Short Term
+### 13.1 已完成
 
-1. Implement all encoding algorithms (RLE, Gorilla, etc.)
-2. Add async/await support for I/O operations
-3. Implement query filters (time range, value filters)
-4. Add statistics (min, max, count per chunk)
+1. ✅ 14/15 编码算法（仅缺 CAMEL）
+2. ✅ 5/6 压缩算法（LZMA2 仅读取）
+3. ✅ V3 + V4 格式完整读写
+4. ✅ V4 表模型（TAG/FIELD 列）和树模型（对齐+非对齐）
+5. ✅ 450+ Java 互操作文件验证
+6. ✅ CI/CD（GitHub Actions）
 
-### 13.2 Long Term
+### 13.2 待完成
 
-1. Spark/Flink integration
-2. Cloud storage support (S3, Azure Blob)
-3. Parallel write/read support
-4. Columnar analytics optimizations
+1. CAMEL 编码（Double 专用，低优先级）
+2. Async/await I/O
+3. 查询过滤器（时间范围、值过滤）
+4. 统计信息读取（min, max, count）
+5. 云存储适配器
+6. 并行读写
 
 ## 14. Appendix
 
 ### 14.1 Dependencies
 
-- **K4os.Compression.LZ4** (1.3.8): LZ4 compression
-- **ZstdSharp.Port** (0.8.7): ZSTD compression
-- **Snappy.NET** (1.1.1.8): Snappy compression (requires native libraries)
-- **SharpCompress** (0.44.5): LZMA2 support (planned)
+- **K4os.Compression.LZ4** (1.3.8): LZ4 压缩
+- **ZstdSharp.Port** (0.8.7): ZSTD 压缩
+- **IronSnappy** (1.3.1): Snappy 压缩（纯 C#，跨平台）
+- **SharpCompress** (0.41.0): LZMA2 解压缩
 
 ### 14.2 References
 

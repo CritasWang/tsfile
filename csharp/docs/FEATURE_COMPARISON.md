@@ -1,139 +1,136 @@
-# C# TsFile Feature Comparison with Java
+# C# TsFile 与 Java 功能对比
 
-This document provides a detailed comparison of the C# TsFile library features against the reference Java implementation.
+本文档详细对比 C# TsFile 库与 Java 参考实现的功能差异。
 
-## Overview
+**最后更新**: 2026-02-12
 
-| Component | Java | C# | Status |
-|-----------|------|-----|--------|
-| Data Types | 12 types | 12 types | ✅ Full parity |
-| Encoding Types | 15 types | 15 types | ✅ Full parity |
-| Compression Types | 6 types | 6 types | ✅ Full parity |
-| V4 Table Model | ✅ Complete | ⚠️ Basic | Partial |
-| Query Engine | ✅ Complete | ❌ Missing | Not implemented |
-| Encryption | ✅ Complete | ❌ Missing | Not implemented |
+## 总览
 
-## Data Types
+| 组件 | Java | C# | 状态 |
+|------|------|-----|------|
+| 数据类型 | 13 种 | 13 种 | ✅ 完全一致 |
+| 编码算法 | 15 种 | 15 种 | ✅ 完全一致 |
+| 压缩算法 | 6 种 | 5+1 种 | ✅ LZMA2 仅读取 |
+| V4 表模型 | ✅ 完整 | ✅ 完整 | 读写均支持 |
+| V4 树模型 | ✅ 完整 | ✅ 完整 | 读写均支持 |
+| V3 格式 | ✅ 完整 | ✅ 读取 | 可读 Java V3 文件 |
+| 查询引擎 | ✅ 完整 | ✅ 完整 | 时间范围+测量选择+值过滤+聚合查询 |
+| 加密 | ✅ 完整 | ❌ 缺失 | 未实现 |
 
-| Data Type | Java | C# | Notes |
-|-----------|------|-----|-------|
-| Boolean | ✅ | ✅ | Full support |
-| Int32 | ✅ | ✅ | Full support |
-| Int64 | ✅ | ✅ | Full support |
-| Float | ✅ | ✅ | Full support |
-| Double | ✅ | ✅ | Full support |
-| Text | ✅ | ✅ | Full support |
-| String | ✅ | ✅ | Full support |
-| Blob | ✅ | ✅ | Full support |
-| Timestamp | ✅ | ✅ | Full support |
-| Date | ✅ | ✅ | Full support |
-| Vector | ✅ | ✅ | Basic support |
-| Object | ✅ | ✅ | Basic support |
+## 数据类型（13/13 = 100%）
 
-## Encoding Types
+| 数据类型 | Java | C# | 说明 |
+|----------|------|-----|------|
+| Boolean | ✅ | ✅ | 位压缩存储 |
+| Int32 | ✅ | ✅ | 32 位有符号整数 |
+| Int64 | ✅ | ✅ | 64 位有符号整数 |
+| Float | ✅ | ✅ | IEEE 754 单精度 |
+| Double | ✅ | ✅ | IEEE 754 双精度 |
+| Text | ✅ | ✅ | UTF-8 字符串，BinaryStatistics（first+last） |
+| String | ✅ | ✅ | UTF-8 字符串，StringStatistics（first+last+min+max） |
+| Blob | ✅ | ✅ | 二进制数据 |
+| Timestamp | ✅ | ✅ | 64 位毫秒时间戳 |
+| Date | ✅ | ✅ | epoch day 表示 |
+| Vector | ✅ | ✅ | 对齐时间序列的时间块类型 |
+| Unknown | ✅ | ✅ | 动态类型 |
+| Object | ✅ | ✅ | 对象类型 |
 
-| Encoding | Java | C# | Supported Types | Notes |
-|----------|------|-----|-----------------|-------|
-| Plain | ✅ | ✅ | All | Default encoding |
-| Dictionary | ✅ | ✅ | Text/String | For repeated values |
-| RLE | ✅ | ✅ | Bool, Int32, Int64 | Run-length encoding |
-| Diff | ✅ | ✅ | Int32, Int64 | Differential |
-| Ts2Diff | ✅ | ✅ | Int32, Int64, Float, Double | Time series 2nd diff |
-| Bitmap | ✅ | ✅ | Boolean | Bit packing |
-| GorillaV1 | ✅ | ✅ | Float, Double | Legacy Gorilla |
-| Gorilla | ✅ | ✅ | Int32, Int64, Float, Double | Improved Gorilla |
-| Regular | ✅ | ✅ | Int64 | Regular intervals |
-| ZigZag | ✅ | ✅ | Int32, Int64 | ZigZag + VarInt |
-| Chimp | ✅ | ✅ | Float, Double | CHIMP compression |
-| Sprintz | ✅ | ✅ | Int32, Int64, Float, Double | Sprintz encoding |
-| RLBE | ✅ | ✅ | Int32, Int64 | RLE + Binary |
-| Camel | ✅ | ✅ | Float, Double | Camel encoding |
-| Freq | ⚠️ Deprecated | ⚠️ Deprecated | - | Not recommended |
+## 编码算法（14/15 = 93%）
 
-## Compression Types
+| 编码 | Java | C# 编码器 | C# 解码器 | 适用类型 | 说明 |
+|------|------|-----------|-----------|----------|------|
+| Plain | ✅ | ✅ | ✅ | 全部 | 默认编码 |
+| RLE | ✅ | ✅ | ✅ | Boolean, Int32, Int64 | 游程编码+位打包 |
+| ZigZag | ✅ | ✅ | ✅ | Int32, Int64 | ZigZag VarInt |
+| Gorilla | ✅ | ✅ | ✅ | Float, Double, Int32 | XOR 压缩（V2） |
+| GorillaV1 | ✅ | ✅ | ✅ | Float, Double | 旧版 Gorilla |
+| Dictionary | ✅ | ✅ | ✅ | Text, String | 字典编码 |
+| TS_2DIFF | ✅ | ✅ | ✅ | Int32, Int64, Float, Double | 二阶差分 |
+| Diff | ✅ | ✅ | ✅ | Int32, Int64 | 一阶差分 |
+| Bitmap | ✅ | ✅ | ✅ | Boolean | 位图编码 |
+| Regular | ✅ | ✅ | ✅ | Int64 | 规律间隔 |
+| CHIMP | ✅ | ✅ | ✅ | Float, Double, Int32, Int64 | 高级 XOR 压缩 |
+| SPRINTZ | ✅ | ✅ | ✅ | Int32, Int64, Float, Double | 传感器优化 |
+| RLBE | ✅ | ✅ | ✅ | Int32, Int64 | 游程字节编码 |
+| Freq | ⚠️ 已弃用 | ⚠️ 已弃用 | ⚠️ 已弃用 | - | 映射到 Plain |
+| CAMEL | ✅ | ✅ | ✅ | Double | 整数+小数拆分 + Gorilla 回退 |
 
-| Compression | Java | C# | Notes |
-|-------------|------|-----|-------|
-| Uncompressed | ✅ | ✅ | No compression |
-| Snappy | ✅ | ✅ | Fast compression |
-| Gzip | ✅ | ✅ | High ratio |
-| LZ4 | ✅ | ✅ | Fast decompression |
-| Zstd | ✅ | ✅ | Balanced performance |
-| LZMA2 | ✅ | ✅ | Maximum compression |
+## 压缩算法（5/6）
 
-## V4 Table Model
+| 压缩 | Java | C# 压缩 | C# 解压 | 库 | 说明 |
+|------|------|---------|---------|-----|------|
+| Uncompressed | ✅ | ✅ | ✅ | - | 无压缩 |
+| Snappy | ✅ | ✅ | ✅ | IronSnappy | 纯 C#，跨平台 |
+| Gzip | ✅ | ✅ | ✅ | System.IO.Compression | 高压缩比 |
+| LZ4 | ✅ | ✅ | ✅ | K4os.Compression.LZ4 | 最快 |
+| Zstd | ✅ | ✅ | ✅ | ZstdSharp.Port | 最佳压缩比 |
+| LZMA2 | ✅ | ❌ | ✅ | SharpCompress | 仅解压缩 |
 
-| Feature | Java | C# | Notes |
-|---------|------|-----|-------|
-| TableSchema | ✅ | ✅ | Table definition |
-| ColumnSchema | ✅ | ✅ | Column metadata |
-| ColumnCategory (TAG/FIELD) | ✅ | ✅ | Column classification |
-| TsFileWriterV4 | ✅ | ✅ | Basic writing |
-| TsFileReaderV4 | ✅ | ✅ | Basic reading |
-| DeviceID | ✅ | ✅ | StringArrayDeviceID |
-| MetadataIndexNode | ✅ | ✅ | Index tree |
-| TimeseriesMetadata | ✅ | ✅ | Series metadata |
-| Query Execution | ✅ | ❌ | Not implemented |
-| Filters | ✅ | ❌ | Not implemented |
-| Result Sets | ✅ | ❌ | Not implemented |
+## V4 表模型
 
-## Reader/Writer Components
+| 功能 | Java | C# | 说明 |
+|------|------|-----|------|
+| TableSchema 定义 | ✅ | ✅ | 表名 + 列定义 |
+| ColumnSchema | ✅ | ✅ | 列名 + 数据类型 |
+| ColumnCategory | ✅ | ✅ | TAG / FIELD / TIMESTAMP |
+| 多设备写入 | ✅ | ✅ | 按 TAG 值自动分设备 |
+| 表模型查询 | ✅ | ✅ | 按表名查询所有设备 |
+| StringArrayDeviceID | ✅ | ✅ | V4 设备 ID 序列化 |
+| MetadataIndexNode | ✅ | ✅ | 索引树导航 |
+| TimeseriesMetadataV4 | ✅ | ✅ | 含嵌入式 ChunkMetadata |
+| 过滤查询 | ✅ | ✅ | 时间范围 + 测量选择（Chunk 级别跳过） |
 
-| Component | Java | C# | Status |
-|-----------|------|-----|--------|
-| TsFileWriter | ✅ | ✅ | Implemented |
-| TsFileReader | ✅ | ✅ | Basic implementation |
-| TsFileWriterV4 | ✅ | ✅ | Implemented |
-| TsFileReaderV4 | ✅ | ✅ | Implemented |
-| TsFileWriterBuilder | ✅ | ❌ | Missing |
-| TsFileReaderBuilder | ✅ | ❌ | Missing |
-| PageReader | ✅ | ❌ | Missing |
-| ChunkReader | ✅ | ❌ | Missing |
-| SeriesReader | ✅ | ❌ | Missing |
-| BatchData/TsBlock | ✅ | ❌ | Missing |
+## V4 树模型
 
-## Test Coverage
+| 功能 | Java | C# | 说明 |
+|------|------|-----|------|
+| 非对齐时间序列 | ✅ | ✅ | 每测量独立时间块 |
+| 对齐时间序列 | ✅ | ✅ | 共享时间块 + 独立值块 |
+| 设备注册 | ✅ | ✅ | registerTimeseries / registerAlignedTimeseries |
+| 按设备路径查询 | ✅ | ✅ | 如 `root.db1.d1` |
+| 设备路径前缀匹配 | ✅ | ✅ | 自动解析表名（如 `root.db1`） |
+| 设备级过滤 | ✅ | ✅ | NavigateNode 中按 deviceFilter 过滤 |
 
-### Encoding + Compression Combinations Tested
+## 读写组件
 
-| Data Type | Tested Encodings | Tested Compressions |
-|-----------|------------------|---------------------|
-| Int32 | Plain, RLE, Ts2Diff, Gorilla, ZigZag | Uncompressed, Snappy, Gzip, LZ4, Zstd |
-| Int64 | Plain, RLE, Ts2Diff, Gorilla, ZigZag | Uncompressed, Snappy, Gzip, LZ4, Zstd |
-| Float | Plain, Gorilla, GorillaV1 | Uncompressed, Snappy, Gzip, LZ4, Zstd |
-| Double | Plain, Gorilla, GorillaV1 | Uncompressed, Snappy, Gzip, LZ4, Zstd |
-| Boolean | Plain, RLE | Uncompressed, Snappy, Gzip |
-| String | Plain, Dictionary | Uncompressed, Snappy, Gzip, LZ4, Zstd |
+| 组件 | Java | C# | 说明 |
+|------|------|-----|------|
+| TsFileWriter（统一） | ✅ | ✅ | V3/V4 统一写入器 |
+| TsFileReader（统一） | ✅ | ✅ | V3/V4 统一读取器，自动检测版本 |
+| Tablet | ✅ | ✅ | 批量数据容器 |
+| QueryResult | ✅ | ✅ | 查询结果（Timestamps + MeasurementData） |
+| Builder 模式 | ✅ | ❌ | 未实现 |
+| PageReader | ✅ | ❌ | 内嵌在 TsFileReader 中 |
+| ChunkReader | ✅ | ❌ | 内嵌在 TsFileReader 中 |
 
-### Additional Test Scenarios
+## 互操作测试覆盖
 
-- Mixed data types in single file
-- Mixed compression types per column
-- Various data patterns (sequential, repeated, alternating, random)
-- Different row counts (1, 10, 100, 1000)
-- Large string values
-- Multiple devices (multi-tag combinations)
+### 编码 × 压缩 × 数据类型（360 文件）
 
-## Roadmap for C# Implementation
+| 数据类型 | 编码 | 压缩 |
+|----------|------|------|
+| INT32 | PLAIN, RLE, TS_2DIFF, GORILLA, ZIGZAG | UNCOMPRESSED, GZIP, LZ4, SNAPPY, ZSTD |
+| INT64 | PLAIN, RLE, TS_2DIFF, GORILLA, ZIGZAG | 同上 |
+| FLOAT | PLAIN, GORILLA, GORILLA_V1, TS_2DIFF | 同上 |
+| DOUBLE | PLAIN, GORILLA, GORILLA_V1, TS_2DIFF | 同上 |
+| BOOLEAN | PLAIN, RLE | 同上 |
+| TEXT | PLAIN, DICTIONARY | 同上 |
 
-### Phase 1 (Current) ✅
-- Basic V4 read/write support
-- All data types
-- All encoding types
-- All compression types
-- Comprehensive interop tests
+### 表模型（90 文件）
 
-### Phase 2 (Planned)
-- Query execution engine
-- Filter expressions
-- Result set implementation
+各编码/压缩组合的表模型文件。
 
-### Phase 3 (Planned)
-- Page/Chunk readers
-- Series readers
-- BatchData/TsBlock support
+### 综合互操作
 
-### Phase 4 (Future)
-- Encryption support
-- Builder pattern APIs
-- Performance optimizations
+- 3 个表 × 10 FIELD 列 × 8 设备 × 20 行
+- 5 个树模型设备（对齐 + 非对齐）× 多种数据类型
+- C# → Java 反向验证（3 文件）
+
+### 其他测试场景
+
+- 混合数据类型
+- 混合压缩类型
+- 多种数据模式（递增、重复、交替）
+- 不同行数（1, 10, 100, 1000）
+- 大字符串值
+- 多设备（多 TAG 组合）

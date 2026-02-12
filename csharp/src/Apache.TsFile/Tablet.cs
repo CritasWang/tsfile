@@ -18,6 +18,7 @@
  */
 
 using Apache.TsFile.Enums;
+using Apache.TsFile.IO;
 using Apache.TsFile.Schema;
 
 namespace Apache.TsFile;
@@ -58,6 +59,16 @@ public class Tablet
     /// </summary>
     public object?[] Values { get; }
     
+    /// <summary>
+    /// Gets or sets the column categories (TAG, FIELD) for table model.
+    /// </summary>
+    public List<ColumnCategory>? ColumnCategories { get; private set; }
+
+    /// <summary>
+    /// Gets the TAG column indexes (cached after SetColumnCategories).
+    /// </summary>
+    public List<int> TagColumnIndexes { get; } = new();
+
     /// <summary>
     /// Gets or sets the current row count in this tablet.
     /// </summary>
@@ -105,6 +116,8 @@ public class Tablet
     {
         TableName = tableSchema.TableName;
         ColumnNames = tableSchema.Measurements.Select(m => m.MeasurementName).ToList();
+        if (tableSchema.ColumnCategories.Count > 0)
+            SetColumnCategories(tableSchema.ColumnCategories);
     }
     
     /// <summary>
@@ -128,6 +141,36 @@ public class Tablet
         RowCount++;
     }
     
+    /// <summary>
+    /// Sets the column categories and builds the TAG column index list.
+    /// </summary>
+    public void SetColumnCategories(List<ColumnCategory> categories)
+    {
+        ColumnCategories = categories;
+        TagColumnIndexes.Clear();
+        for (int i = 0; i < categories.Count; i++)
+        {
+            if (categories[i] == ColumnCategory.Tag)
+                TagColumnIndexes.Add(i);
+        }
+    }
+
+    /// <summary>
+    /// Gets the device ID for the i-th row (table model).
+    /// Builds StringArrayDeviceID from [tableName, tagCol1Value, tagCol2Value, ...].
+    /// </summary>
+    public IDeviceID GetDeviceID(int row)
+    {
+        var idArray = new string[TagColumnIndexes.Count + 1];
+        idArray[0] = TableName ?? DeviceName;
+        for (int j = 0; j < TagColumnIndexes.Count; j++)
+        {
+            var value = GetValue(TagColumnIndexes[j], row);
+            idArray[j + 1] = value?.ToString()!;
+        }
+        return new StringArrayDeviceID(idArray);
+    }
+
     /// <summary>
     /// Resets the tablet to empty state.
     /// </summary>

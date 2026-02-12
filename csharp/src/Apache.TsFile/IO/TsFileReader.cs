@@ -70,21 +70,74 @@ public class TsFileReader : IDisposable
     public IReadOnlyDictionary<string, TableSchema> Schemas => _schemas!;
     
     /// <summary>
-    /// Queries data from the file.
+    /// Queries data from the file with optional value filter.
     /// </summary>
     public QueryResult Query(string deviceName, string[]? measurements = null,
-        long? startTime = null, long? endTime = null)
+        long? startTime = null, long? endTime = null, IValueFilter? valueFilter = null)
     {
+        string originalDeviceName = deviceName;
+        
+        // Try direct lookup first, then parse deviceName → tableName for table model
         if (!_schemas!.TryGetValue(deviceName, out var schema))
-            throw new ArgumentException($"Device {deviceName} not found in file");
-
-        // Simplified C# V3 files have no index nodes - use chunk scanning
-        if (_tableIndexNodes == null || _tableIndexNodes.Count == 0)
         {
-            return QueryV3Simplified(deviceName, schema, measurements, startTime, endTime);
+            // Try lowercase (writer lowercases table names to match Java)
+            var lowerName = deviceName.ToLowerInvariant();
+            if (!_schemas.TryGetValue(lowerName, out schema))
+            {
+                // Try StringArrayDeviceID table name extraction (for table model)
+                var deviceId = new StringArrayDeviceID(deviceName);
+                var tableName = deviceId.GetTableName().ToLowerInvariant();
+                if (_schemas.TryGetValue(tableName, out schema))
+                {
+                    deviceName = tableName;
+                }
+                else
+                {
+                    // For V4 tree model: try progressively shorter dot-prefixes as table name
+                    // e.g., "root.db1.d1" → try "root.db1", then "root"
+                    var parts = deviceName.Split('.');
+                    bool found = false;
+                    for (int prefixLen = parts.Length - 1; prefixLen >= 1; prefixLen--)
+                    {
+                        var prefix = string.Join(".", parts[..prefixLen]);
+                        if (_schemas.TryGetValue(prefix, out schema))
+                        {
+                            deviceName = prefix;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        throw new ArgumentException($"Device {deviceName} not found in file");
+                }
+            }
+            else
+            {
+                deviceName = lowerName;
+            }
         }
 
-        return QueryV4(deviceName, schema, measurements, startTime, endTime);
+        // Simplified C# V3 files have no index nodes - use chunk scanning
+        QueryResult result;
+        if (_tableIndexNodes == null || _tableIndexNodes.Count == 0)
+        {
+            result = QueryV3Simplified(deviceName, schema, measurements, startTime, endTime);
+        }
+        else
+        {
+            // For V4 tree model: if original device name differs from table name,
+            // pass it as a device filter to only read that specific device's data
+            string? deviceFilter = (originalDeviceName != deviceName) ? originalDeviceName : null;
+            result = QueryV4(deviceName, schema, measurements, startTime, endTime, deviceFilter);
+        }
+
+        // Apply value filter if specified
+        if (valueFilter != null)
+        {
+            result.ApplyValueFilter(valueFilter);
+        }
+
+        return result;
     }
     
     /// <summary>
@@ -591,7 +644,8 @@ public class TsFileReader : IDisposable
                 TsDataType.Int64 or TsDataType.Timestamp => decoder.ReadLong(data, ref offset),
                 TsDataType.Float => decoder.ReadFloat(data, ref offset),
                 TsDataType.Double => decoder.ReadDouble(data, ref offset),
-                TsDataType.Text or TsDataType.String => decoder.ReadString(data, ref offset),
+                TsDataType.Text or TsDataType.String or TsDataType.Blob => decoder.ReadString(data, ref offset),
+                TsDataType.Date => decoder.ReadInt(data, ref offset),
                 _ => throw new NotSupportedException($"Data type {dataType} not supported")
             };
             
@@ -757,7 +811,7 @@ public class TsFileReader : IDisposable
     #region V4 Query Implementation
 
     private QueryResult QueryV4(string deviceName, TableSchema schema, string[]? measurements,
-        long? startTime, long? endTime)
+        long? startTime, long? endTime, string? deviceFilter = null)
     {
         var result = new QueryResult(deviceName, schema);
 
@@ -776,13 +830,18 @@ public class TsFileReader : IDisposable
         }
 
         // Navigate to find timeseries metadata for this device
-        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, deviceName, measurements);
+        // For V3: deviceFilter is the full device path (set by NavigateToTimeseriesMetadata)
+        // For V4 tree model: deviceFilter is the original device path passed from Query()
+        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, deviceName, measurements, deviceFilter);
 
         // For Tree Model files (no table schemas), dynamically populate measurements from TimeseriesMetadata
         if (schema.Measurements.Count == 0)
         {
             foreach (var tsMetadata in timeseriesMetadataList)
             {
+                // Skip time chunk (empty measurement ID) and Vector type entries
+                if (string.IsNullOrEmpty(tsMetadata.MeasurementId) || tsMetadata.DataType == TsDataType.Vector)
+                    continue;
                 var measurementSchema = new MeasurementSchema(
                     tsMetadata.MeasurementId,
                     tsMetadata.DataType,
@@ -792,9 +851,13 @@ public class TsFileReader : IDisposable
             }
         }
 
-        // Read chunks for each timeseries
+        // Read chunks for each timeseries and collect statistics
         foreach (var tsMetadata in timeseriesMetadataList)
         {
+            if (tsMetadata.Statistics != null && !string.IsNullOrEmpty(tsMetadata.MeasurementId))
+            {
+                result.AddStatistics(tsMetadata.MeasurementId, tsMetadata.Statistics);
+            }
             ReadTimeseriesDataV4(result, tsMetadata, startTime, endTime);
         }
 
@@ -809,14 +872,14 @@ public class TsFileReader : IDisposable
     }
 
     private List<TimeseriesMetadataV4> NavigateToTimeseriesMetadata(MetadataIndexNode rootNode,
-        string deviceName, string[]? measurements)
+        string deviceName, string[]? measurements, string? externalDeviceFilter = null)
     {
         var result = new List<TimeseriesMetadataV4>();
         var measurementFilter = measurements?.ToHashSet();
 
         // For V3, deviceName is the full device path (e.g., "root.test.d0")
-        // We need to filter to the specific device in the index tree
-        string? deviceFilter = (_fileVersion == TsFileConstants.Version) ? deviceName : null;
+        // For V4 tree model, externalDeviceFilter is the full device path
+        string? deviceFilter = (_fileVersion == TsFileConstants.Version) ? deviceName : externalDeviceFilter;
 
         NavigateNode(rootNode, result, measurementFilter, deviceFilter);
 
@@ -887,18 +950,33 @@ public class TsFileReader : IDisposable
     private void ReadTimeseriesMetadataFromNode(MetadataIndexNode node, List<TimeseriesMetadataV4> result,
         HashSet<string>? measurementFilter)
     {
-        foreach (var entry in node.Entries)
+        // In Java V4, LeafMeasurement entries are range markers:
+        // each entry points to the FIRST TimeseriesMetadata at that offset.
+        // All TimeseriesMetadata between consecutive entries (or up to endOffset) must be read.
+        var entries = node.Entries.OfType<MeasurementMetadataIndexEntry>().ToList();
+        
+        for (int i = 0; i < entries.Count; i++)
         {
-            if (entry is MeasurementMetadataIndexEntry measurementEntry)
+            var entry = entries[i];
+            long rangeEnd = (i + 1 < entries.Count) ? entries[i + 1].Offset : node.EndOffset;
+            
+            // If measurement filter is set and this entry's name doesn't match,
+            // we still need to check — the entry name is just the first measurement in the range.
+            // For table model, the first entry is "" (time), and value measurements follow.
+            // We read all and filter individually.
+            _fileStream.Position = entry.Offset;
+            
+            while (_fileStream.Position < rangeEnd)
             {
-                // Check measurement filter
-                if (measurementFilter != null && !measurementFilter.Contains(measurementEntry.Name))
-                    continue;
-
-                // Read timeseries metadata at this offset
-                _fileStream.Position = measurementEntry.Offset;
                 var tsMetadata = TimeseriesMetadataV4.Deserialize(_reader, ReadUnsignedVarInt, ReadVarIntString,
                     () => ReadInt64BigEndian(_reader), needChunkMetadata: true);
+                
+                // Apply measurement filter
+                if (measurementFilter != null && 
+                    !string.IsNullOrEmpty(tsMetadata.MeasurementId) &&
+                    !measurementFilter.Contains(tsMetadata.MeasurementId))
+                    continue;
+                
                 result.Add(tsMetadata);
             }
         }
@@ -978,10 +1056,18 @@ public class TsFileReader : IDisposable
         var chunkDataStart = _fileStream.Position;
         var chunkDataEnd = chunkDataStart + dataSize;
 
-        while (_fileStream.Position < chunkDataEnd)
+        try
         {
-            ReadPageV4(result, measurementId, chunkDataType, encoding, compression,
-                startTime, endTime, isAligned, isTimeChunk, hasMultiplePages);
+            while (_fileStream.Position < chunkDataEnd)
+            {
+                ReadPageV4(result, measurementId, chunkDataType, encoding, compression,
+                    startTime, endTime, isAligned, isTimeChunk, hasMultiplePages);
+            }
+        }
+        catch (Exception)
+        {
+            // Skip chunks with unsupported data types or decoder errors
+            _fileStream.Position = chunkDataEnd;
         }
     }
 
@@ -1152,9 +1238,16 @@ public class TsFileReader : IDisposable
                 _reader.ReadBytes(40); // min(8) + max(8) + first(8) + last(8) + sum(8)
                 break;
             case TsDataType.Text:
-            case TsDataType.String:
-                // first(4+len) + last(4+len), no min/max
+                // BinaryStatistics: first(4+len) + last(4+len), no min/max
                 for (int i = 0; i < 2; i++)
+                {
+                    var len = ReadInt32BigEndian(_reader);
+                    if (len > 0) _reader.ReadBytes(len);
+                }
+                break;
+            case TsDataType.String:
+                // StringStatistics: first(4+len) + last(4+len) + min(4+len) + max(4+len)
+                for (int i = 0; i < 4; i++)
                 {
                     var len = ReadInt32BigEndian(_reader);
                     if (len > 0) _reader.ReadBytes(len);
@@ -1191,12 +1284,43 @@ public class QueryResult
     public List<long> Timestamps { get; }
     public Dictionary<string, List<object>> MeasurementData { get; }
     
+    /// <summary>
+    /// Per-measurement statistics from chunk metadata (available for V4 files).
+    /// </summary>
+    public Dictionary<string, StatisticsV4> Statistics { get; } = new();
+    
     internal QueryResult(string deviceName, TableSchema schema)
     {
         DeviceName = deviceName;
         Schema = schema;
         Timestamps = new List<long>();
         MeasurementData = new Dictionary<string, List<object>>();
+    }
+    
+    internal void AddStatistics(string measurement, StatisticsV4 stats)
+    {
+        if (Statistics.TryGetValue(measurement, out var existing))
+        {
+            // Merge: expand time range, aggregate count
+            existing.Count += stats.Count;
+            if (stats.StartTime < existing.StartTime) existing.StartTime = stats.StartTime;
+            if (stats.EndTime > existing.EndTime) existing.EndTime = stats.EndTime;
+        }
+        else
+        {
+            // Clone to avoid mutation
+            Statistics[measurement] = new StatisticsV4
+            {
+                Count = stats.Count,
+                StartTime = stats.StartTime,
+                EndTime = stats.EndTime,
+                MinValue = stats.MinValue,
+                MaxValue = stats.MaxValue,
+                FirstValue = stats.FirstValue,
+                LastValue = stats.LastValue,
+                SumValue = stats.SumValue
+            };
+        }
     }
     
     internal void AddTimestamps(long[] timestamps, List<int>? indices)
@@ -1236,6 +1360,128 @@ public class QueryResult
         }
     }
     
+    internal void ApplyValueFilter(IValueFilter filter)
+    {
+        var keepIndices = new List<int>();
+        for (int i = 0; i < Timestamps.Count; i++)
+        {
+            int rowIndex = i;
+            bool matches = filter.Matches(Timestamps[i], name =>
+            {
+                if (MeasurementData.TryGetValue(name, out var values) && rowIndex < values.Count)
+                    return values[rowIndex];
+                return null;
+            });
+            if (matches) keepIndices.Add(i);
+        }
+
+        if (keepIndices.Count == Timestamps.Count) return;
+
+        var newTimestamps = keepIndices.Select(i => Timestamps[i]).ToList();
+        Timestamps.Clear();
+        Timestamps.AddRange(newTimestamps);
+
+        foreach (var key in MeasurementData.Keys.ToList())
+        {
+            var oldValues = MeasurementData[key];
+            var newValues = keepIndices.Where(i => i < oldValues.Count).Select(i => oldValues[i]).ToList();
+            MeasurementData[key] = newValues;
+        }
+    }
+    
+    /// <summary>
+    /// Returns the number of rows for a measurement (or total rows if measurement is null).
+    /// </summary>
+    public int Count(string? measurement = null)
+    {
+        if (measurement == null) return Timestamps.Count;
+        return MeasurementData.TryGetValue(measurement, out var values) ? values.Count : 0;
+    }
+
+    /// <summary>
+    /// Returns the minimum value for a numeric measurement.
+    /// </summary>
+    public double? Min(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Min());
+    }
+
+    /// <summary>
+    /// Returns the maximum value for a numeric measurement.
+    /// </summary>
+    public double? Max(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Max());
+    }
+
+    /// <summary>
+    /// Returns the sum of values for a numeric measurement.
+    /// </summary>
+    public double? Sum(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Sum());
+    }
+
+    /// <summary>
+    /// Returns the average value for a numeric measurement.
+    /// </summary>
+    public double? Avg(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Average());
+    }
+
+    /// <summary>
+    /// Returns the first value for a measurement (earliest timestamp).
+    /// </summary>
+    public object? First(string measurement)
+    {
+        if (!MeasurementData.TryGetValue(measurement, out var values) || values.Count == 0)
+            return null;
+        return values[0];
+    }
+
+    /// <summary>
+    /// Returns the last value for a measurement (latest timestamp).
+    /// </summary>
+    public object? Last(string measurement)
+    {
+        if (!MeasurementData.TryGetValue(measurement, out var values) || values.Count == 0)
+            return null;
+        return values[^1];
+    }
+
+    /// <summary>
+    /// Computes all aggregations for a measurement and returns them as a dictionary.
+    /// Keys: "count", "min", "max", "sum", "avg", "first", "last".
+    /// </summary>
+    public Dictionary<string, object?> Aggregate(string measurement)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["count"] = Count(measurement),
+            ["min"] = Min(measurement),
+            ["max"] = Max(measurement),
+            ["sum"] = Sum(measurement),
+            ["avg"] = Avg(measurement),
+            ["first"] = First(measurement),
+            ["last"] = Last(measurement)
+        };
+    }
+
+    private double? AggregateNumeric(string measurement, Func<IEnumerable<double>, double> aggregator)
+    {
+        if (!MeasurementData.TryGetValue(measurement, out var values) || values.Count == 0)
+            return null;
+
+        var doubles = new List<double>();
+        foreach (var v in values)
+        {
+            try { doubles.Add(Convert.ToDouble(v)); }
+            catch { /* skip non-numeric */ }
+        }
+        return doubles.Count > 0 ? aggregator(doubles) : null;
+    }
+
     public Tablet ToTablet()
     {
         // Use only measurements that have data (handles filtered queries)

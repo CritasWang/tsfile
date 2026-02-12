@@ -104,7 +104,15 @@ public class TsFileWriter : IDisposable
     /// </summary>
     public void RegisterDevice(string deviceName, List<MeasurementSchema> measurements)
     {
-        var schema = new TableSchema(deviceName);
+        // Parse device name to get the table name for consistent V4 metadata
+        var deviceId = new StringArrayDeviceID(deviceName);
+        var tableName = deviceId.GetTableName().ToLowerInvariant();
+
+        // Multiple devices may map to the same table; skip if already registered
+        if (_schemas.ContainsKey(tableName))
+            return;
+
+        var schema = new TableSchema(tableName);
         foreach (var measurement in measurements)
         {
             schema.AddMeasurement(measurement);
@@ -130,26 +138,46 @@ public class TsFileWriter : IDisposable
         if (tablet == null)
             throw new ArgumentNullException(nameof(tablet));
 
-        if (!_schemas.TryGetValue(tablet.DeviceName, out var schema))
-            throw new ArgumentException($"Schema for device {tablet.DeviceName} not registered");
+        // Parse device name to get table name for schema lookup
+        var deviceId = new StringArrayDeviceID(tablet.DeviceName);
+        var tableName = deviceId.GetTableName().ToLowerInvariant();
+
+        if (!_schemas.TryGetValue(tableName, out var schema))
+            throw new ArgumentException($"Schema for device {tablet.DeviceName} (table: {tableName}) not registered");
 
         if (tablet.RowCount == 0)
             return;
 
+        // Set column categories on tablet from schema (for device splitting)
+        if (tablet.ColumnCategories == null && schema.ColumnCategories.Count > 0)
+            tablet.SetColumnCategories(schema.ColumnCategories);
+
         if (FileVersion == 4)
         {
-            // V4 writes directly to file stream
-            WriteChunkDataV4(tablet, schema);
+            // V4: for table model with TAG columns, split by device
+            bool hasTagColumns = schema.GetTagColumnCount() > 0;
+            if (hasTagColumns)
+            {
+                var deviceSplits = SplitTabletByDevice(tablet);
+                foreach (var (splitDeviceId, startRow, endRow) in deviceSplits)
+                {
+                    WriteChunkDataV4(tablet, schema, splitDeviceId, startRow, endRow);
+                }
+            }
+            else
+            {
+                WriteChunkDataV4(tablet, schema, deviceId, 0, tablet.RowCount);
+            }
         }
         else
         {
             // V3 writes to buffer first
-            var buffer = _deviceChunkBuffers[tablet.DeviceName];
+            var buffer = _deviceChunkBuffers[tableName];
             WriteChunkDataV3(buffer, tablet, schema);
 
             if (buffer.Length >= TsFileConstants.DefaultChunkSize)
             {
-                FlushDeviceBuffer(tablet.DeviceName);
+                FlushDeviceBuffer(tableName);
             }
         }
     }
@@ -164,9 +192,13 @@ public class TsFileWriter : IDisposable
     /// </summary>
     public void WriteRow(string deviceName, long timestamp, params object[] values)
     {
-        if (!_schemas.TryGetValue(deviceName, out var schema))
-            throw new ArgumentException($"Schema for device {deviceName} not registered");
-        
+        // Parse device name to get table name for schema lookup
+        var deviceId = new StringArrayDeviceID(deviceName);
+        var tableName = deviceId.GetTableName().ToLowerInvariant();
+
+        if (!_schemas.TryGetValue(tableName, out var schema))
+            throw new ArgumentException($"Schema for device {deviceName} (table: {tableName}) not registered");
+
         var tablet = new Tablet(deviceName, schema.Measurements, 1);
         tablet.AddRow(timestamp, values);
         Write(tablet);
@@ -200,6 +232,21 @@ public class TsFileWriter : IDisposable
         // Write footer
         WriteFooter();
 
+        // Ensure all data is written to disk and close streams
+        _writer.Flush();
+        _fileStream.Flush();
+        _writer.Dispose();
+        _fileStream.Dispose();
+
+        // Clean up device buffers
+        foreach (var buffer in _deviceChunkBuffers.Values)
+        {
+            buffer?.Dispose();
+        }
+
+        // Mark as disposed to prevent double-dispose
+        _disposed = true;
+        GC.SuppressFinalize(this);
     }
     
     private void WriteHeader()
@@ -257,14 +304,39 @@ public class TsFileWriter : IDisposable
         chunkWriter.Write(tablet.RowCount);
     }
 
-    private void WriteChunkDataV4(Tablet tablet, TableSchema schema)
+    /// <summary>
+    /// Splits a tablet by device ID based on TAG column values.
+    /// Returns (deviceId, startRow, endRow) tuples.
+    /// </summary>
+    private static List<(IDeviceID DeviceId, int StartRow, int EndRow)> SplitTabletByDevice(Tablet tablet)
     {
-        bool isTreeModel = schema.ColumnSchemas == null || schema.ColumnSchemas.Count == 0;
+        var result = new List<(IDeviceID, int, int)>();
+        IDeviceID? lastDeviceId = null;
+        int lastStart = 0;
+
+        for (int i = 0; i < tablet.RowCount; i++)
+        {
+            var currDeviceId = tablet.GetDeviceID(i);
+            if (lastDeviceId != null && !currDeviceId.Equals(lastDeviceId))
+            {
+                result.Add((lastDeviceId, lastStart, i));
+                lastStart = i;
+            }
+            lastDeviceId = currDeviceId;
+        }
+        if (lastDeviceId != null)
+            result.Add((lastDeviceId, lastStart, tablet.RowCount));
+
+        return result;
+    }
+
+    private void WriteChunkDataV4(Tablet tablet, TableSchema schema, IDeviceID deviceId, int startRow, int endRow)
+    {
+        bool isTreeModel = schema.GetTagColumnCount() == 0 && (schema.ColumnSchemas == null || schema.ColumnSchemas.Count == 0);
 
         // Write ChunkGroupHeader: [marker:0x00][deviceID]
         var chunkGroupStart = _fileStream.Position;
         _writer.Write((byte)0x00);
-        var deviceId = new StringArrayDeviceID(tablet.DeviceName);
         deviceId.Serialize(_writer);
 
         var chunkGroupInfo = new ChunkGroupInfo
@@ -275,30 +347,31 @@ public class TsFileWriter : IDisposable
 
         if (isTreeModel)
         {
-            WriteTreeModelChunksV4(tablet, schema, chunkGroupInfo);
+            WriteTreeModelChunksV4(tablet, schema, chunkGroupInfo, startRow, endRow);
         }
         else
         {
-            WriteTableModelChunksV4(tablet, schema, chunkGroupInfo);
+            WriteTableModelChunksV4(tablet, schema, chunkGroupInfo, startRow, endRow);
         }
 
         chunkGroupInfo.EndOffset = _fileStream.Position;
         _chunkGroups.Add(chunkGroupInfo);
     }
 
-    private void WriteTreeModelChunksV4(Tablet tablet, TableSchema schema, ChunkGroupInfo chunkGroupInfo)
+    private void WriteTreeModelChunksV4(Tablet tablet, TableSchema schema, ChunkGroupInfo chunkGroupInfo, int startRow, int endRow)
     {
+        int rowCount = endRow - startRow;
         // Tree model: each measurement is a non-aligned chunk with interleaved time+value pages
         // Encode timestamps once (shared across all measurements)
         var timeEncoder = EncoderFactory.CreateEncoder(TsEncoding.Ts2Diff, TsDataType.Int64);
         using var timeStream = new MemoryStream();
-        for (int row = 0; row < tablet.RowCount; row++)
+        for (int row = startRow; row < endRow; row++)
             timeEncoder.Encode(tablet.Timestamps[row], timeStream);
         timeEncoder.Flush(timeStream);
         var timeBuffer = timeStream.ToArray();
 
-        long startTime = tablet.Timestamps[0];
-        long endTime = tablet.Timestamps[tablet.RowCount - 1];
+        long startTime = tablet.Timestamps[startRow];
+        long endTime = tablet.Timestamps[endRow - 1];
 
         for (int i = 0; i < schema.Measurements.Count; i++)
         {
@@ -308,7 +381,7 @@ public class TsFileWriter : IDisposable
             // Encode values
             var valueEncoder = EncoderFactory.CreateEncoder(measurement.Encoding, measurement.DataType);
             using var valueStream = new MemoryStream();
-            EncodeColumn(valueEncoder, tablet, i, valueStream);
+            EncodeColumnRange(valueEncoder, tablet, i, startRow, endRow, valueStream);
             var valueBuffer = valueStream.ToArray();
 
             // Build page data: [timeBufferLength:unsignedVarInt][timeBuffer][valueBuffer]
@@ -344,7 +417,7 @@ public class TsFileWriter : IDisposable
             _writer.Write(pageHeader);
             _writer.Write(compressedPageData);
 
-            var stats = ComputeColumnStatistics(tablet, i, measurement.DataType);
+            var stats = ComputeColumnStatisticsRange(tablet, i, measurement.DataType, startRow, endRow);
             chunkGroupInfo.Chunks.Add(new ChunkInfo
             {
                 MeasurementId = measurement.MeasurementName,
@@ -353,7 +426,7 @@ public class TsFileWriter : IDisposable
                 Compression = measurement.Compression,
                 Offset = chunkOffset,
                 IsTimeChunk = false,
-                Count = tablet.RowCount,
+                Count = rowCount,
                 StartTime = startTime,
                 EndTime = endTime,
                 MinValue = stats.Min,
@@ -365,18 +438,20 @@ public class TsFileWriter : IDisposable
         }
     }
 
-    private void WriteTableModelChunksV4(Tablet tablet, TableSchema schema, ChunkGroupInfo chunkGroupInfo)
+    private void WriteTableModelChunksV4(Tablet tablet, TableSchema schema, ChunkGroupInfo chunkGroupInfo, int startRow, int endRow)
     {
+        int rowCount = endRow - startRow;
         // Table model: separate time chunk + value chunks (aligned)
-        long startTime = tablet.Timestamps[0];
-        long endTime = tablet.Timestamps[tablet.RowCount - 1];
+        // Only FIELD columns are written as value chunks; TAG columns form the device ID
+        long startTime = tablet.Timestamps[startRow];
+        long endTime = tablet.Timestamps[endRow - 1];
 
         // Write time chunk
         var timeCompression = CompressionType.Uncompressed;
         var timeCompressor = CompressorFactory.GetCompressor(timeCompression);
         var timeEncoder = EncoderFactory.CreateEncoder(TsEncoding.Ts2Diff, TsDataType.Int64);
         using var timeStream = new MemoryStream();
-        for (int row = 0; row < tablet.RowCount; row++)
+        for (int row = startRow; row < endRow; row++)
             timeEncoder.Encode(tablet.Timestamps[row], timeStream);
         timeEncoder.Flush(timeStream);
         var timeData = timeStream.ToArray();
@@ -406,20 +481,24 @@ public class TsFileWriter : IDisposable
             Compression = timeCompression,
             Offset = timeChunkOffset,
             IsTimeChunk = true,
-            Count = tablet.RowCount,
+            Count = rowCount,
             StartTime = startTime,
             EndTime = endTime
         });
 
-        // Write value chunks
+        // Write value chunks — only FIELD columns
         for (int i = 0; i < schema.Measurements.Count; i++)
         {
+            // Skip TAG columns — they are part of the device ID, not data chunks
+            if (i < schema.ColumnCategories.Count && schema.ColumnCategories[i] == ColumnCategory.Tag)
+                continue;
+
             var measurement = schema.Measurements[i];
             var compressor = CompressorFactory.GetCompressor(measurement.Compression);
             var encoder = EncoderFactory.CreateEncoder(measurement.Encoding, measurement.DataType);
 
             using var valueStream = new MemoryStream();
-            EncodeColumn(encoder, tablet, i, valueStream);
+            EncodeColumnRange(encoder, tablet, i, startRow, endRow, valueStream);
             var valueData = valueStream.ToArray();
             var compressedValueData = CompressPageData(compressor, valueData, measurement.Compression);
 
@@ -439,7 +518,7 @@ public class TsFileWriter : IDisposable
             _writer.Write(valuePageHeaderBytes);
             _writer.Write(compressedValueData);
 
-            var valStats = ComputeColumnStatistics(tablet, i, measurement.DataType);
+            var valStats = ComputeColumnStatisticsRange(tablet, i, measurement.DataType, startRow, endRow);
             chunkGroupInfo.Chunks.Add(new ChunkInfo
             {
                 MeasurementId = measurement.MeasurementName,
@@ -448,7 +527,7 @@ public class TsFileWriter : IDisposable
                 Compression = measurement.Compression,
                 Offset = valueChunkOffset,
                 IsTimeChunk = false,
-                Count = tablet.RowCount,
+                Count = rowCount,
                 StartTime = startTime,
                 EndTime = endTime,
                 MinValue = valStats.Min,
@@ -464,7 +543,12 @@ public class TsFileWriter : IDisposable
 
     private static ColumnStats ComputeColumnStatistics(Tablet tablet, int columnIndex, TsDataType dataType)
     {
-        if (tablet.RowCount == 0)
+        return ComputeColumnStatisticsRange(tablet, columnIndex, dataType, 0, tablet.RowCount);
+    }
+
+    private static ColumnStats ComputeColumnStatisticsRange(Tablet tablet, int columnIndex, TsDataType dataType, int startRow, int endRow)
+    {
+        if (endRow <= startRow)
             return new ColumnStats(null, null, null, null, 0.0);
 
         var values = tablet.Values[columnIndex];
@@ -473,70 +557,70 @@ public class TsFileWriter : IDisposable
             case TsDataType.Boolean:
             {
                 var arr = (bool[])values!;
-                bool first = arr[0], last = arr[tablet.RowCount - 1];
+                bool first = arr[startRow], last = arr[endRow - 1];
                 long sum = 0;
-                for (int r = 0; r < tablet.RowCount; r++) if (arr[r]) sum++;
+                for (int r = startRow; r < endRow; r++) if (arr[r]) sum++;
                 return new ColumnStats(null, null, first, last, sum);
             }
             case TsDataType.Int32:
             case TsDataType.Date:
             {
                 var arr = (int[])values!;
-                int min = arr[0], max = arr[0];
+                int min = arr[startRow], max = arr[startRow];
                 double sum = 0;
-                for (int r = 0; r < tablet.RowCount; r++)
+                for (int r = startRow; r < endRow; r++)
                 {
                     if (arr[r] < min) min = arr[r];
                     if (arr[r] > max) max = arr[r];
                     sum += arr[r];
                 }
-                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+                return new ColumnStats(min, max, arr[startRow], arr[endRow - 1], sum);
             }
             case TsDataType.Int64:
             case TsDataType.Timestamp:
             {
                 var arr = (long[])values!;
-                long min = arr[0], max = arr[0];
+                long min = arr[startRow], max = arr[startRow];
                 double sum = 0;
-                for (int r = 0; r < tablet.RowCount; r++)
+                for (int r = startRow; r < endRow; r++)
                 {
                     if (arr[r] < min) min = arr[r];
                     if (arr[r] > max) max = arr[r];
                     sum += arr[r];
                 }
-                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+                return new ColumnStats(min, max, arr[startRow], arr[endRow - 1], sum);
             }
             case TsDataType.Float:
             {
                 var arr = (float[])values!;
-                float min = arr[0], max = arr[0];
+                float min = arr[startRow], max = arr[startRow];
                 double sum = 0;
-                for (int r = 0; r < tablet.RowCount; r++)
+                for (int r = startRow; r < endRow; r++)
                 {
                     if (arr[r] < min) min = arr[r];
                     if (arr[r] > max) max = arr[r];
                     sum += arr[r];
                 }
-                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+                return new ColumnStats(min, max, arr[startRow], arr[endRow - 1], sum);
             }
             case TsDataType.Double:
             {
                 var arr = (double[])values!;
-                double min = arr[0], max = arr[0], sum = 0;
-                for (int r = 0; r < tablet.RowCount; r++)
+                double min = arr[startRow], max = arr[startRow], sum = 0;
+                for (int r = startRow; r < endRow; r++)
                 {
                     if (arr[r] < min) min = arr[r];
                     if (arr[r] > max) max = arr[r];
                     sum += arr[r];
                 }
-                return new ColumnStats(min, max, arr[0], arr[tablet.RowCount - 1], sum);
+                return new ColumnStats(min, max, arr[startRow], arr[endRow - 1], sum);
             }
             case TsDataType.Text:
             case TsDataType.String:
             {
                 var arr = (string[])values!;
-                var first = arr[0] ?? string.Empty;
-                var last = arr[tablet.RowCount - 1] ?? string.Empty;
+                var first = arr[startRow] ?? string.Empty;
+                var last = arr[endRow - 1] ?? string.Empty;
                 return new ColumnStats(null, null, first, last, 0.0);
             }
             default:
@@ -583,10 +667,15 @@ public class TsFileWriter : IDisposable
     
     private void EncodeColumn(IEncoder encoder, Tablet tablet, int columnIndex, MemoryStream stream)
     {
+        EncodeColumnRange(encoder, tablet, columnIndex, 0, tablet.RowCount, stream);
+    }
+
+    private void EncodeColumnRange(IEncoder encoder, Tablet tablet, int columnIndex, int startRow, int endRow, MemoryStream stream)
+    {
         var schema = tablet.Schemas[columnIndex];
         var values = tablet.Values[columnIndex];
         
-        for (int row = 0; row < tablet.RowCount; row++)
+        for (int row = startRow; row < endRow; row++)
         {
             switch (schema.DataType)
             {

@@ -51,7 +51,7 @@ public static class DecoderFactory
             TsEncoding.Sprintz => new SprintzDecoder(dataType),
             TsEncoding.Rlbe => new RlbeDecoder(dataType),
             TsEncoding.Dictionary => new DictionaryDecoder(dataType),
-            TsEncoding.Camel => new PlainDecoder(), // TODO: Implement CamelDecoder
+            TsEncoding.Camel => new CamelDecoder(),
             _ => new PlainDecoder()
         };
     }

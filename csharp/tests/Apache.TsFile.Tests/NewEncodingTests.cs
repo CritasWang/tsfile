@@ -291,5 +291,79 @@ public class NewEncodingTests
         Assert.IsType<SprintzDecoder>(DecoderFactory.CreateDecoder(TsEncoding.Sprintz, TsDataType.Int32));
         Assert.IsType<RlbeDecoder>(DecoderFactory.CreateDecoder(TsEncoding.Rlbe, TsDataType.Int32));
         Assert.IsType<PlainDecoder>(DecoderFactory.CreateDecoder(TsEncoding.Freq, TsDataType.Int32));
+        Assert.IsType<CamelDecoder>(DecoderFactory.CreateDecoder(TsEncoding.Camel, TsDataType.Double));
+        Assert.IsType<CamelEncoder>(EncoderFactory.CreateEncoder(TsEncoding.Camel, TsDataType.Double));
+    }
+
+    [Fact]
+    public void CamelEncoder_DoubleRoundTrip_BasicValues()
+    {
+        var encoder = new CamelEncoder();
+        var decoder = new CamelDecoder();
+        var stream = new MemoryStream();
+
+        var testData = new double[] { 23.5, 23.7, 23.6, 24.0, 23.9 };
+
+        foreach (var value in testData)
+            encoder.Encode(value, stream);
+        encoder.Flush(stream);
+
+        var encoded = stream.ToArray();
+        int offset = 0;
+        var decoded = new List<double>();
+        for (int i = 0; i < testData.Length; i++)
+            decoded.Add(decoder.ReadDouble(encoded, ref offset));
+
+        Assert.Equal(testData.Length, decoded.Count);
+        for (int i = 0; i < testData.Length; i++)
+            Assert.Equal(testData[i], decoded[i], 6);
+    }
+
+    [Fact]
+    public void CamelEncoder_DoubleRoundTrip_IntegerValues()
+    {
+        var encoder = new CamelEncoder();
+        var decoder = new CamelDecoder();
+        var stream = new MemoryStream();
+
+        var testData = new double[] { 100.0, 200.0, 300.0, 150.0, 250.0 };
+
+        foreach (var value in testData)
+            encoder.Encode(value, stream);
+        encoder.Flush(stream);
+
+        var encoded = stream.ToArray();
+        int offset = 0;
+        var decoded = new List<double>();
+        for (int i = 0; i < testData.Length; i++)
+            decoded.Add(decoder.ReadDouble(encoded, ref offset));
+
+        Assert.Equal(testData.Length, decoded.Count);
+        for (int i = 0; i < testData.Length; i++)
+            Assert.Equal(testData[i], decoded[i], 6);
+    }
+
+    [Fact]
+    public void CamelEncoder_DoubleRoundTrip_NegativeValues()
+    {
+        var encoder = new CamelEncoder();
+        var decoder = new CamelDecoder();
+        var stream = new MemoryStream();
+
+        var testData = new double[] { -1.5, 2.5, -3.5, 4.5, -5.5 };
+
+        foreach (var value in testData)
+            encoder.Encode(value, stream);
+        encoder.Flush(stream);
+
+        var encoded = stream.ToArray();
+        int offset = 0;
+        var decoded = new List<double>();
+        for (int i = 0; i < testData.Length; i++)
+            decoded.Add(decoder.ReadDouble(encoded, ref offset));
+
+        Assert.Equal(testData.Length, decoded.Count);
+        for (int i = 0; i < testData.Length; i++)
+            Assert.Equal(testData[i], decoded[i], 6);
     }
 }

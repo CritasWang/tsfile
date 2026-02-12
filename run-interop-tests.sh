@@ -21,9 +21,21 @@ cd "$SCRIPT_DIR/java"
 # Note: 'install' phase triggers OSGi bundle plugin which strips classes from jar,
 # so we compile first, then manually install the full jar.
 mvn clean compile -pl tsfile -am -Dmaven.test.skip=true -Dmaven.javadoc.skip=true -Dmdep.analyze.skip=true -Drat.skip=true -q
+# Install parent POMs so interop-tests can resolve its parent chain
+mvn install:install-file -Dfile="$SCRIPT_DIR/pom.xml" \
+    -DgroupId=org.apache.tsfile -DartifactId=tsfile-parent -Dversion=2.2.1-SNAPSHOT \
+    -Dpackaging=pom -q
+mvn install:install-file -Dfile="$SCRIPT_DIR/java/pom.xml" \
+    -DgroupId=org.apache.tsfile -DartifactId=tsfile-java -Dversion=2.2.1-SNAPSHOT \
+    -Dpackaging=pom -q
 # Create full jar from compiled classes and install to local repo
+# Merge common module classes since OSGi bundle plugin normally inlines them
+COMBINED_DIR=$(mktemp -d)
+cp -r "$SCRIPT_DIR/java/common/target/classes"/* "$COMBINED_DIR"/
+cp -r "$SCRIPT_DIR/java/tsfile/target/classes"/* "$COMBINED_DIR"/
 jar cf "$SCRIPT_DIR/java/tsfile/target/tsfile-2.2.1-SNAPSHOT.jar" \
-    -C "$SCRIPT_DIR/java/tsfile/target/classes" .
+    -C "$COMBINED_DIR" .
+rm -rf "$COMBINED_DIR"
 mvn install:install-file \
     -Dfile="$SCRIPT_DIR/java/tsfile/target/tsfile-2.2.1-SNAPSHOT.jar" \
     -DgroupId=org.apache.tsfile -DartifactId=tsfile -Dversion=2.2.1-SNAPSHOT \
