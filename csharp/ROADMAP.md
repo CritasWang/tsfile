@@ -63,8 +63,8 @@
 - [x] 时间范围过滤（Chunk 级别跳过 + 页面级别过滤）
 - [x] 测量选择过滤（TimeseriesMetadata 级别跳过）
 - [x] 统计信息读取（QueryResult.Statistics）
-- [ ] 值过滤表达式
-- [ ] 聚合查询（min, max, count, avg）
+- [x] 值过滤表达式（ComparisonFilter + And/Or/Not 组合）
+- [x] 聚合查询（min, max, count, avg, sum, first, last）
 
 ### 📝 Phase 8: 性能优化
 - [ ] Async/await I/O
@@ -85,8 +85,8 @@
 
 | 指标 | 值 |
 |------|-----|
-| 测试总数 | 199 |
-| 通过率 | 100%（199/199） |
+| 测试总数 | 207 |
+| 通过率 | 100%（207/207） |
 | 编码覆盖 | 100%（15/15） |
 | 压缩覆盖 | 83%（5/6） |
 | 数据类型覆盖 | 100%（13/13） |

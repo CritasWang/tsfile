@@ -70,10 +70,10 @@ public class TsFileReader : IDisposable
     public IReadOnlyDictionary<string, TableSchema> Schemas => _schemas!;
     
     /// <summary>
-    /// Queries data from the file.
+    /// Queries data from the file with optional value filter.
     /// </summary>
     public QueryResult Query(string deviceName, string[]? measurements = null,
-        long? startTime = null, long? endTime = null)
+        long? startTime = null, long? endTime = null, IValueFilter? valueFilter = null)
     {
         string originalDeviceName = deviceName;
         
@@ -118,15 +118,26 @@ public class TsFileReader : IDisposable
         }
 
         // Simplified C# V3 files have no index nodes - use chunk scanning
+        QueryResult result;
         if (_tableIndexNodes == null || _tableIndexNodes.Count == 0)
         {
-            return QueryV3Simplified(deviceName, schema, measurements, startTime, endTime);
+            result = QueryV3Simplified(deviceName, schema, measurements, startTime, endTime);
+        }
+        else
+        {
+            // For V4 tree model: if original device name differs from table name,
+            // pass it as a device filter to only read that specific device's data
+            string? deviceFilter = (originalDeviceName != deviceName) ? originalDeviceName : null;
+            result = QueryV4(deviceName, schema, measurements, startTime, endTime, deviceFilter);
         }
 
-        // For V4 tree model: if original device name differs from table name,
-        // pass it as a device filter to only read that specific device's data
-        string? deviceFilter = (originalDeviceName != deviceName) ? originalDeviceName : null;
-        return QueryV4(deviceName, schema, measurements, startTime, endTime, deviceFilter);
+        // Apply value filter if specified
+        if (valueFilter != null)
+        {
+            result.ApplyValueFilter(valueFilter);
+        }
+
+        return result;
     }
     
     /// <summary>
@@ -1349,6 +1360,128 @@ public class QueryResult
         }
     }
     
+    internal void ApplyValueFilter(IValueFilter filter)
+    {
+        var keepIndices = new List<int>();
+        for (int i = 0; i < Timestamps.Count; i++)
+        {
+            int rowIndex = i;
+            bool matches = filter.Matches(Timestamps[i], name =>
+            {
+                if (MeasurementData.TryGetValue(name, out var values) && rowIndex < values.Count)
+                    return values[rowIndex];
+                return null;
+            });
+            if (matches) keepIndices.Add(i);
+        }
+
+        if (keepIndices.Count == Timestamps.Count) return;
+
+        var newTimestamps = keepIndices.Select(i => Timestamps[i]).ToList();
+        Timestamps.Clear();
+        Timestamps.AddRange(newTimestamps);
+
+        foreach (var key in MeasurementData.Keys.ToList())
+        {
+            var oldValues = MeasurementData[key];
+            var newValues = keepIndices.Where(i => i < oldValues.Count).Select(i => oldValues[i]).ToList();
+            MeasurementData[key] = newValues;
+        }
+    }
+    
+    /// <summary>
+    /// Returns the number of rows for a measurement (or total rows if measurement is null).
+    /// </summary>
+    public int Count(string? measurement = null)
+    {
+        if (measurement == null) return Timestamps.Count;
+        return MeasurementData.TryGetValue(measurement, out var values) ? values.Count : 0;
+    }
+
+    /// <summary>
+    /// Returns the minimum value for a numeric measurement.
+    /// </summary>
+    public double? Min(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Min());
+    }
+
+    /// <summary>
+    /// Returns the maximum value for a numeric measurement.
+    /// </summary>
+    public double? Max(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Max());
+    }
+
+    /// <summary>
+    /// Returns the sum of values for a numeric measurement.
+    /// </summary>
+    public double? Sum(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Sum());
+    }
+
+    /// <summary>
+    /// Returns the average value for a numeric measurement.
+    /// </summary>
+    public double? Avg(string measurement)
+    {
+        return AggregateNumeric(measurement, vals => vals.Average());
+    }
+
+    /// <summary>
+    /// Returns the first value for a measurement (earliest timestamp).
+    /// </summary>
+    public object? First(string measurement)
+    {
+        if (!MeasurementData.TryGetValue(measurement, out var values) || values.Count == 0)
+            return null;
+        return values[0];
+    }
+
+    /// <summary>
+    /// Returns the last value for a measurement (latest timestamp).
+    /// </summary>
+    public object? Last(string measurement)
+    {
+        if (!MeasurementData.TryGetValue(measurement, out var values) || values.Count == 0)
+            return null;
+        return values[^1];
+    }
+
+    /// <summary>
+    /// Computes all aggregations for a measurement and returns them as a dictionary.
+    /// Keys: "count", "min", "max", "sum", "avg", "first", "last".
+    /// </summary>
+    public Dictionary<string, object?> Aggregate(string measurement)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["count"] = Count(measurement),
+            ["min"] = Min(measurement),
+            ["max"] = Max(measurement),
+            ["sum"] = Sum(measurement),
+            ["avg"] = Avg(measurement),
+            ["first"] = First(measurement),
+            ["last"] = Last(measurement)
+        };
+    }
+
+    private double? AggregateNumeric(string measurement, Func<IEnumerable<double>, double> aggregator)
+    {
+        if (!MeasurementData.TryGetValue(measurement, out var values) || values.Count == 0)
+            return null;
+
+        var doubles = new List<double>();
+        foreach (var v in values)
+        {
+            try { doubles.Add(Convert.ToDouble(v)); }
+            catch { /* skip non-numeric */ }
+        }
+        return doubles.Count > 0 ? aggregator(doubles) : null;
+    }
+
     public Tablet ToTablet()
     {
         // Use only measurements that have data (handles filtered queries)
