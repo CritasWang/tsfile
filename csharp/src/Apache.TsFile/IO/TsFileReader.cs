@@ -840,9 +840,13 @@ public class TsFileReader : IDisposable
             }
         }
 
-        // Read chunks for each timeseries
+        // Read chunks for each timeseries and collect statistics
         foreach (var tsMetadata in timeseriesMetadataList)
         {
+            if (tsMetadata.Statistics != null && !string.IsNullOrEmpty(tsMetadata.MeasurementId))
+            {
+                result.AddStatistics(tsMetadata.MeasurementId, tsMetadata.Statistics);
+            }
             ReadTimeseriesDataV4(result, tsMetadata, startTime, endTime);
         }
 
@@ -1269,12 +1273,43 @@ public class QueryResult
     public List<long> Timestamps { get; }
     public Dictionary<string, List<object>> MeasurementData { get; }
     
+    /// <summary>
+    /// Per-measurement statistics from chunk metadata (available for V4 files).
+    /// </summary>
+    public Dictionary<string, StatisticsV4> Statistics { get; } = new();
+    
     internal QueryResult(string deviceName, TableSchema schema)
     {
         DeviceName = deviceName;
         Schema = schema;
         Timestamps = new List<long>();
         MeasurementData = new Dictionary<string, List<object>>();
+    }
+    
+    internal void AddStatistics(string measurement, StatisticsV4 stats)
+    {
+        if (Statistics.TryGetValue(measurement, out var existing))
+        {
+            // Merge: expand time range, aggregate count
+            existing.Count += stats.Count;
+            if (stats.StartTime < existing.StartTime) existing.StartTime = stats.StartTime;
+            if (stats.EndTime > existing.EndTime) existing.EndTime = stats.EndTime;
+        }
+        else
+        {
+            // Clone to avoid mutation
+            Statistics[measurement] = new StatisticsV4
+            {
+                Count = stats.Count,
+                StartTime = stats.StartTime,
+                EndTime = stats.EndTime,
+                MinValue = stats.MinValue,
+                MaxValue = stats.MaxValue,
+                FirstValue = stats.FirstValue,
+                LastValue = stats.LastValue,
+                SumValue = stats.SumValue
+            };
+        }
     }
     
     internal void AddTimestamps(long[] timestamps, List<int>? indices)

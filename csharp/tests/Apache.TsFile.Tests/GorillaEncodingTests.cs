@@ -204,7 +204,7 @@ public class GorillaEncodingTests
         }
     }
     
-    [Fact(Skip = "Known issue: Int64 encoding needs investigation - works for Int32, Float, Double")]
+    [Fact]
     public void GorillaEncoder_Int64Timestamp_SuccessfulRoundTrip()
     {
         // Arrange - timestamp values (common use case)

@@ -51,7 +51,7 @@ public static class EncoderFactory
             TsEncoding.Sprintz => new SprintzEncoder(dataType),
             TsEncoding.Rlbe => new RlbeEncoder(dataType),
             TsEncoding.Dictionary => new DictionaryEncoder(dataType),
-            TsEncoding.Camel => new PlainEncoder(), // TODO: Implement CamelEncoder
+            TsEncoding.Camel => new CamelEncoder(),
             _ => new PlainEncoder()
         };
     }

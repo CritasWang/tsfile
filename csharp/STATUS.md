@@ -12,12 +12,14 @@
 C# 实现的 Apache TSFile 提供了一个生产就绪的时序文件格式库：
 
 - ✅ 与 Java 完全兼容的数据类型（13/13）
-- ✅ 核心编码算法（14/15 已实现）
+- ✅ 全部编码算法（15/15 已实现，含 CAMEL）
 - ✅ 完整压缩支持（5/6 算法，LZMA2 仅支持读取）
 - ✅ **统一 API 支持 V3 和 V4 格式**（V4 为默认）
 - ✅ 与 Java 二进制格式兼容（经 450+ 互操作测试文件验证）
-- ✅ 全面测试（196 个测试，195 通过，1 跳过）
+- ✅ 全面测试（199 个测试，199 通过，0 跳过）
 - ✅ 性能基准测试工具
+- ✅ 统计 API
+- ✅ 查询过滤器
 
 ---
 
@@ -76,7 +78,7 @@ using var reader = new TsFileReader("data.tsfile");
 | Snappy | ✅ | ✅ | IronSnappy（纯 C#） | 快速，跨平台 |
 | LZMA2 | ❌ | ✅ | SharpCompress | 仅支持解压缩 |
 
-### 编码算法（14/15 = 93%）
+### 编码算法（15/15 = 100%）
 
 | 编码 | 适用类型 | 状态 | 典型场景 |
 |------|----------|------|----------|
@@ -93,8 +95,8 @@ using var reader = new TsFileReader("data.tsfile");
 | **CHIMP** | Int32, Int64, Float, Double | ✅ | 高精度浮点 |
 | **SPRINTZ** | Int32, Int64, Float, Double | ✅ | 传感器优化 |
 | **RLBE** | Int32, Int64 | ✅ | 游程字节编码 |
-| **Freq** | - | ⚠️ 已弃用 | 映射到 Plain |
-| **CAMEL** | Double | ❌ 未实现 | 低优先级 |
+| **Freq** | - | ✅ | 映射到 Plain |
+| **CAMEL** | Double | ✅ | 低优先级 |
 
 ### V4 表模型功能
 
@@ -135,9 +137,9 @@ using var reader = new TsFileReader("data.tsfile");
 ### 测试统计
 
 ```
-总计: 196 个测试
-通过: 195 (99.5%)
-跳过: 1 (Gorilla Int64 编码器 - 已知限制)
+总计: 199 个测试
+通过: 199 (100%)
+跳过: 0
 失败: 0
 ```
 
@@ -148,12 +150,14 @@ using var reader = new TsFileReader("data.tsfile");
 | 压缩算法 | 6 | 100% |
 | RLE 编码 | 8 | 100% |
 | ZigZag 编码 | 9 | 100% |
-| Gorilla 编码 | 8/9 | 88.9% |
+| Gorilla 编码 | 9 | 100% |
 | Dictionary 编码 | 8 | 100% |
 | TS_2DIFF 编码 | 11 | 100% |
 | CHIMP/SPRINTZ/RLBE 编码 | 多个 | 100% |
 | 树模型读写 | 4 | 100% |
 | 表模型读写 | 4 | 100% |
+| 统计 API | 2 | 100% |
+| 查询过滤器 | 2 | 100% |
 | V4 格式 | 12 | 100% |
 | 集成测试 | 23 | 100% |
 
