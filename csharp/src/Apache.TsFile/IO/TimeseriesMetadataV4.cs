@@ -184,14 +184,31 @@ public class StatisticsV4
                 break;
                 
             case TsDataType.Text:
-            case TsDataType.String:
-                // Java BinaryStatistics/StringStatistics: first(4+len) + last(4+len), NO min/max
+                // Java BinaryStatistics: first(4+len) + last(4+len), NO min/max
                 // Uses Int32 (big-endian) length prefix (ReadWriteIOUtils.readBinary)
-                var firstLen = ReadInt32BigEndian(reader);
-                stats.FirstValue = firstLen > 0 ? reader.ReadBytes(firstLen) : Array.Empty<byte>();
-                var lastLen = ReadInt32BigEndian(reader);
-                stats.LastValue = lastLen > 0 ? reader.ReadBytes(lastLen) : Array.Empty<byte>();
-                stats.SumValue = 0.0;
+                {
+                    var firstLen = ReadInt32BigEndian(reader);
+                    stats.FirstValue = firstLen > 0 ? reader.ReadBytes(firstLen) : Array.Empty<byte>();
+                    var lastLen = ReadInt32BigEndian(reader);
+                    stats.LastValue = lastLen > 0 ? reader.ReadBytes(lastLen) : Array.Empty<byte>();
+                    stats.SumValue = 0.0;
+                }
+                break;
+                
+            case TsDataType.String:
+                // Java StringStatistics: first(4+len) + last(4+len) + min(4+len) + max(4+len)
+                // Uses Int32 (big-endian) length prefix (ReadWriteIOUtils.readBinary)
+                {
+                    var firstLen = ReadInt32BigEndian(reader);
+                    stats.FirstValue = firstLen > 0 ? reader.ReadBytes(firstLen) : Array.Empty<byte>();
+                    var lastLen = ReadInt32BigEndian(reader);
+                    stats.LastValue = lastLen > 0 ? reader.ReadBytes(lastLen) : Array.Empty<byte>();
+                    var minLen = ReadInt32BigEndian(reader);
+                    stats.MinValue = minLen > 0 ? reader.ReadBytes(minLen) : Array.Empty<byte>();
+                    var maxLen = ReadInt32BigEndian(reader);
+                    stats.MaxValue = maxLen > 0 ? reader.ReadBytes(maxLen) : Array.Empty<byte>();
+                    stats.SumValue = 0.0;
+                }
                 break;
                 
             case TsDataType.Blob:

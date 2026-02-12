@@ -1,504 +1,271 @@
-# Apache TSFile C# Implementation - Status Report
+# Apache TSFile C# 实现 - 状态报告
 
-**Version**: 1.1.0
-**Date**: 2026-02-09
-**Target Platform**: .NET 9/10
-**Status**: Production Ready (v3 and v4 format supported)
-
-## Executive Summary
-
-The C# implementation of Apache TSFile provides a production-ready time-series file format library with:
-- ✅ Full data type compatibility with Java (13/13 types)
-- ✅ Core encoding algorithms (14/15 implemented, all critical ones complete)
-- ✅ Complete compression support (5/6 algorithms, all production-ready)
-- ✅ **Unified API for V3 and V4 formats** (V4 is default)
-- ✅ Binary format compatibility with Java
-- ✅ Comprehensive testing (189 tests, 188 pass, 1 skip)
-- ✅ Performance benchmarking tools
-- ✅ Complete documentation
+**版本**: 1.2.0  
+**日期**: 2026-02-12  
+**目标平台**: .NET 9/10  
+**状态**: 生产就绪（V3 + V4 格式完整支持）
 
 ---
 
-## Version Compatibility
+## 概述
 
-### TSFile Format Versions
+C# 实现的 Apache TSFile 提供了一个生产就绪的时序文件格式库：
 
-| Version | C# Support | Java Default | Notes |
-|---------|------------|--------------|-------|
-| v3 | ✅ Full support | No | `new TsFileWriter(path, 3)` |
-| v4 | ✅ Full support | ✅ Yes | `new TsFileWriter(path)` (default) |
+- ✅ 与 Java 完全兼容的数据类型（13/13）
+- ✅ 核心编码算法（14/15 已实现）
+- ✅ 完整压缩支持（5/6 算法，LZMA2 仅支持读取）
+- ✅ **统一 API 支持 V3 和 V4 格式**（V4 为默认）
+- ✅ 与 Java 二进制格式兼容（经 450+ 互操作测试文件验证）
+- ✅ 全面测试（196 个测试，195 通过，1 跳过）
+- ✅ 性能基准测试工具
 
-### Unified API (New in v1.1.0)
+---
 
-The C# implementation now uses a **unified API** for both V3 and V4 formats:
+## 格式版本支持
+
+| 版本 | 写入 | 读取 | 说明 |
+|------|------|------|------|
+| V3（C# 简化格式） | ✅ | ✅ | `new TsFileWriter(path, 3)` |
+| V3（Java 格式） | - | ✅ | 自动检测，4/4 文件可读 |
+| V4 树模型 | ✅ | ✅ | 非对齐 + 对齐时间序列 |
+| V4 表模型 | ✅ | ✅ | TAG/FIELD 列，多设备 |
+
+### 统一 API
 
 ```csharp
-// V4 format (default)
+// V4 格式（默认）
 using var writer = new TsFileWriter("data.tsfile");
 
-// V3 format (explicit)
+// V3 格式（显式指定）
 using var writer = new TsFileWriter("data.tsfile", 3);
 
-// Reader auto-detects version
+// 读取器自动检测版本
 using var reader = new TsFileReader("data.tsfile");
-Console.WriteLine($"File version: {reader.FileVersion}");
 ```
 
-### ✅ Data Types (13/13 - 100%)
+---
 
-All Java data types are supported:
+## 功能完整性
 
-| Type | Status | Notes |
-|------|--------|-------|
-| Boolean | ✅ Complete | Bit-packed storage |
-| Int32 | ✅ Complete | 32-bit signed integer |
-| Int64 | ✅ Complete | 64-bit signed integer |
-| Float | ✅ Complete | IEEE 754 single precision |
-| Double | ✅ Complete | IEEE 754 double precision |
-| Text | ✅ Complete | UTF-8 encoded strings |
-| String | ✅ Complete | Alias for Text |
-| Timestamp | ✅ Complete | 64-bit milliseconds |
-| Date | ✅ Complete | Date representation |
-| Blob | ✅ Complete | Binary data |
-| Vector | ✅ Complete | Vector type |
-| Unknown | ✅ Complete | Dynamic type |
-| Object | ✅ Complete | Object type |
+### 数据类型（13/13 = 100%）
 
-**Compatibility**: 100% with Java implementation
+| 类型 | 状态 | 说明 |
+|------|------|------|
+| Boolean | ✅ | 位压缩存储 |
+| Int32 | ✅ | 32 位有符号整数 |
+| Int64 | ✅ | 64 位有符号整数 |
+| Float | ✅ | IEEE 754 单精度 |
+| Double | ✅ | IEEE 754 双精度 |
+| Text | ✅ | UTF-8 编码字符串 |
+| String | ✅ | 与 Text 类似，统计信息不同 |
+| Timestamp | ✅ | 64 位毫秒时间戳 |
+| Date | ✅ | 日期表示（epoch day） |
+| Blob | ✅ | 二进制数据 |
+| Vector | ✅ | 向量类型（对齐时间序列） |
+| Unknown | ✅ | 动态类型 |
+| Object | ✅ | 对象类型 |
 
-### ✅ Compression Algorithms (5/6 - 83%)
+### 压缩算法（5/6 = 83%）
 
-| Algorithm | Status | Platform | Performance | Notes |
-|-----------|--------|----------|-------------|-------|
-| Uncompressed | ✅ Production | All | Baseline | No overhead |
-| GZIP | ✅ Production | All | Good | System.IO.Compression |
-| LZ4 | ✅ Production | All | Very Fast | K4os.Compression.LZ4 ⭐ **Recommended** |
-| ZSTD | ✅ Production | All | Best Ratio | ZstdSharp.Port ⭐ **Recommended** |
-| Snappy | ✅ Production | All | Fast | IronSnappy (pure C#) |
-| LZMA2 | ⚠️ Read-Only | All | - | SharpCompress (decompression only) |
+| 算法 | 写入 | 读取 | 库 | 说明 |
+|------|------|------|-----|------|
+| Uncompressed | ✅ | ✅ | - | 无压缩 |
+| GZIP | ✅ | ✅ | System.IO.Compression | 高压缩比 |
+| LZ4 | ✅ | ✅ | K4os.Compression.LZ4 | **推荐：最快** |
+| ZSTD | ✅ | ✅ | ZstdSharp.Port | **推荐：最佳压缩比** |
+| Snappy | ✅ | ✅ | IronSnappy（纯 C#） | 快速，跨平台 |
+| LZMA2 | ❌ | ✅ | SharpCompress | 仅支持解压缩 |
 
-**Recommendation**: Use **LZ4** for speed or **ZSTD** for compression ratio.
+### 编码算法（14/15 = 93%）
 
-**LZMA2 Support Details**:
-- ✅ **Decompression**: Fully supported via SharpCompress (pure C#, cross-platform)
-  - Can read Java-generated LZMA2 files for interoperability
-- ❌ **Compression**: Not supported
-  - Reason: Maintains cross-platform compatibility (Windows/Linux/macOS)
-  - Alternative: FastLZMA2Net exists but is Windows-only
-  - Recommendation: Use ZSTD (better compression) or LZ4 (faster) for writing
+| 编码 | 适用类型 | 状态 | 典型场景 |
+|------|----------|------|----------|
+| **Plain** | 全部 | ✅ | 默认编码 |
+| **RLE** | Boolean, Int32, Int64 | ✅ | 重复值、布尔标志 |
+| **ZigZag** | Int32, Int64 | ✅ | 小绝对值、ID |
+| **Gorilla** | Float, Double, Int32 | ✅ | 传感器数据 |
+| **GorillaV1** | Float, Double | ✅ | 旧版 Gorilla 兼容 |
+| **Dictionary** | Text, String | ✅ | 分类数据、状态码 |
+| **TS_2DIFF** | Int32, Int64, Float, Double | ✅ | 规律时间戳 |
+| **Diff** | Int32, Int64 | ✅ | 一阶差分编码 |
+| **Bitmap** | Boolean | ✅ | 位图编码 |
+| **Regular** | Int64 | ✅ | 规律间隔 |
+| **CHIMP** | Int32, Int64, Float, Double | ✅ | 高精度浮点 |
+| **SPRINTZ** | Int32, Int64, Float, Double | ✅ | 传感器优化 |
+| **RLBE** | Int32, Int64 | ✅ | 游程字节编码 |
+| **Freq** | - | ⚠️ 已弃用 | 映射到 Plain |
+| **CAMEL** | Double | ❌ 未实现 | 低优先级 |
 
-### ✅ Encoding Algorithms (14/15 - 93%, All Critical Ones Complete)
+### V4 表模型功能
 
-#### Implemented (Production Ready)
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| TableSchema 定义 | ✅ | TAG/FIELD 列分类 |
+| ColumnCategory | ✅ | TAG、FIELD、TIMESTAMP |
+| 多设备写入 | ✅ | 按 TAG 值自动分设备 |
+| 表模型查询 | ✅ | 按表名查询所有设备数据 |
+| StringArrayDeviceID | ✅ | V4 设备 ID 格式 |
+| MetadataIndexNode | ✅ | 索引树导航 |
+| TimeseriesMetadataV4 | ✅ | 时间序列元数据 |
+| ChunkMetadataV4 | ✅ | 块元数据 |
 
-| Encoding | Data Types | Compression Ratio | Status | Use Case |
-|----------|------------|-------------------|--------|----------|
-| **Plain** | All | Baseline | ✅ Complete | Default, guaranteed compatibility |
-| **RLE** | Boolean, Int32, Int64 | 10-80x | ✅ Complete | Repeated values, boolean flags |
-| **ZigZag** | Int32, Int64 | 3-4x | ✅ Complete | Small absolute values, IDs |
-| **Gorilla** | Float, Double, Int32 | 2-10x | ✅ Complete | Time-series sensor data ⭐ |
-| **GorillaV1** | Float, Double | 2-10x | ✅ Complete | Legacy Gorilla compatibility |
-| **Dictionary** | Text, String | 2-5x | ✅ Complete | Categorical data, status codes |
-| **TS_2DIFF** | Int32, Int64, Float, Double | 4-8x | ✅ Complete | Regular timestamps ⭐ |
-| **Diff** | Int32, Int64 | 3-5x | ✅ Complete | First-order delta encoding |
-| **Bitmap** | Int32 | 5-20x | ✅ Complete | Sparse integer data |
-| **Regular** | Int32, Int64 | 4-8x | ✅ Complete | Regular intervals with missing points |
-| **Freq** | - | - | ⚠️ Deprecated | Deprecated in Java, maps to Plain |
-| **CHIMP** | Int32, Int64, Float, Double | 2-10x | ✅ Complete | High-precision floats, advanced XOR compression |
-| **SPRINTZ** | Int32, Int64, Float, Double | 3-8x | ✅ Complete | Sensor-optimized compression |
-| **RLBE** | Int32, Int64, Float, Double | 2-6x | ✅ Complete | Run-length byte encoding |
+### V4 树模型功能
 
-⭐ = High priority encodings for time-series workloads
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 非对齐时间序列写入 | ✅ | 每个测量独立的时间块 |
+| 对齐时间序列写入 | ✅ | 共享时间块 + 独立值块 |
+| 按设备路径查询 | ✅ | 如 `root.db1.d1` |
+| 设备路径前缀匹配 | ✅ | 自动解析表名 |
+| 设备级过滤 | ✅ | 仅读取指定设备数据 |
 
-#### Not Yet Implemented (Future Enhancement)
+### V3 格式支持
 
-| Encoding | Priority | Planned | Notes |
-|----------|----------|---------|-------|
-| CAMEL | Low | Future | Specialized double compression, Double-only |
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| C# 简化 V3 写入 | ✅ | 自有格式 |
+| C# 简化 V3 读取 | ✅ | 自有格式 |
+| Java V3 文件读取 | ✅ | PlainDeviceID、单 MetadataIndexNode |
+| Java V3 格式自动检测 | ✅ | 先尝试 Java 格式，回退到 C# 格式 |
 
 ---
 
-## Features Comparison: C# vs Java
+## 测试覆盖
 
-### Core Functionality
-
-| Feature | C# | Java | Notes |
-|---------|----|----|-------|
-| Data Types | 13/13 ✅ | 13 | Full compatibility |
-| Compression Algorithms | 5/6 ✅ | 6 | Missing only LZMA2 (not supported in .NET 10) |
-| Encoding Algorithms | 11/14 ✅ | 14 | All critical ones implemented, 3 future enhancements |
-| Binary Format | ✅ Compatible | ✅ | Can read/write each other's files (v3 format) |
-| Schema Definition | ✅ Complete | ✅ | MeasurementSchema, TableSchema |
-| Tablet API | ✅ Complete | ✅ | Batch operations |
-| File I/O | ✅ Complete | ✅ | Read and write support |
-
-### API Simplicity
-
-| Aspect | C# | Java |
-|--------|----|----|
-| API Design | Simplified (Python-inspired) | Full-featured |
-| Complexity | Lower | Higher |
-| Learning Curve | Easier | Steeper |
-| Feature Set | Core features | Extended features |
-
-### Performance
-
-| Metric | C# (.NET 10) | Java (JVM) | Notes |
-|--------|-------------|-----------|-------|
-| Write Speed | Competitive | Baseline | Gorilla+LZ4 optimized |
-| Read Speed | Competitive | Baseline | Efficient decompression |
-| Memory Usage | Efficient | Efficient | GC-managed in both |
-| Startup Time | Fast | Slower | .NET 10 advantage |
-| Cross-platform | Excellent | Excellent | Both fully portable |
-
----
-
-## Test Coverage
-
-### Unit Tests
+### 测试统计
 
 ```
-Total Tests: 189
-Passed: 188 (99.5%)
-Skipped: 1 (Gorilla Int64 - known limitation)
-Failed: 0
-
-Test Breakdown:
-- Compression: 6 tests (100%)
-- Plain Encoding: Built-in coverage
-- RLE Encoding: 8 tests (100%)
-- ZigZag Encoding: 9 tests (100%)
-- Gorilla Encoding: 8/9 tests (88.9%)
-- Dictionary Encoding: 8 tests (100%)
-- TS_2DIFF Encoding: 11 tests (100%)
-- CHIMP Encoding: Tests included
-- SPRINTZ Encoding: Tests included
-- RLBE Encoding: Tests included
-- Tree Model: 4 tests (100%)
-- Table Model: 4 tests (100%)
-- V4 Format: 12 tests (100%)
-- Java Interop: 6 tests (100%)
-- Integration: 23 tests (100%)
+总计: 196 个测试
+通过: 195 (99.5%)
+跳过: 1 (Gorilla Int64 编码器 - 已知限制)
+失败: 0
 ```
 
-### Known Issues
+### 测试分类
 
-1. **Gorilla Int64**: Decoding issue for 64-bit integers. Workaround: Use Float/Double for timestamps or Int32 for smaller values. Impact: Low (Float/Double are primary use cases).
-
----
-
-## Documentation
-
-### Available Documentation (6 documents, ~2,800 lines)
-
-1. **README.md** - Quick start and overview
-2. **DESIGN.md** - Architecture and design decisions
-3. **USER_MANUAL.md** - Comprehensive usage guide
-4. **BENCHMARKS.md** - Performance analysis and benchmark guide
-5. **ENCODING_GUIDE.md** - Guide for implementing remaining encodings
-6. **ROADMAP.md** - Project roadmap and future plans
-7. **STATUS.md** (this document) - Current status and comparison
-
-### Quality
-
-- ✅ Comprehensive API documentation (XML comments)
-- ✅ Usage examples for all major features
-- ✅ Performance benchmarking guide
-- ✅ Migration guide from Java/Python
-- ✅ Troubleshooting section
+| 类别 | 测试数 | 通过率 |
+|------|--------|--------|
+| 压缩算法 | 6 | 100% |
+| RLE 编码 | 8 | 100% |
+| ZigZag 编码 | 9 | 100% |
+| Gorilla 编码 | 8/9 | 88.9% |
+| Dictionary 编码 | 8 | 100% |
+| TS_2DIFF 编码 | 11 | 100% |
+| CHIMP/SPRINTZ/RLBE 编码 | 多个 | 100% |
+| 树模型读写 | 4 | 100% |
+| 表模型读写 | 4 | 100% |
+| V4 格式 | 12 | 100% |
+| 集成测试 | 23 | 100% |
 
 ---
 
-## Performance Benchmarks
+## Java-C# 互操作测试
 
-### Benchmark Tool
+### 测试套件概览
 
-A comprehensive benchmark tool is available at `csharp/benchmarks/Apache.TsFile.Benchmarks/`.
+完整的互操作测试验证了 C# 与 Java 之间的二进制格式兼容性。
 
-**Default Configuration** (100M data points):
-- Tables: 100
-- Devices per table: 100
-- Measurements per device: 100
-- Rows per Tablet: 100
-- Number of Tablets: 100
-- Encoding: Gorilla
-- Compression: LZ4
+| 测试场景 | 文件数 | 结果 | 说明 |
+|----------|--------|------|------|
+| Java V3 → C# 读取 | 4 | ✅ 4/4 | 4 种数据类型 |
+| Java V4 简单文件 → C# | 2 | ✅ 2/2 | 树模型基本读取 |
+| Java V4 综合文件 → C# | 360 | ✅ 360/360 | 6 类型 × 7 编码 × 5 压缩 × 3 模式 |
+| Java V4 表模型 → C# | 90 | ✅ 90/90 | 表模型各编码/压缩组合 |
+| Java V4 综合互操作 → C# | 4 | ✅ 3/3 测试 | 3 表 + 5 设备（对齐+非对齐） |
+| C# V4 → Java 验证 | 3 | ✅ 3/3 | Java 成功读取 C# 生成的文件 |
+| C# 全量测试套件 | - | ✅ 195/195 | 包含所有互操作测试 |
 
-**Metrics Measured**:
-1. Registration Time (ns)
-2. Write Time (ns)
-3. Close Time (ns)
-4. Query Time (ns)
-5. File Size (bytes)
-6. Memory Usage (bytes)
+### 综合互操作测试详情
 
-**Usage**:
-```bash
-cd csharp/benchmarks/Apache.TsFile.Benchmarks
-dotnet run --configuration Release
-```
+**表模型测试**（`ReadTableModel_AllThreeTables`）：
+- 3 个表，每表 3 个 TAG 列 + 10 个 FIELD 列
+- 每表 8 个设备（2 region × 2 plant × 2 device）× 20 行 = 160 行
+- 数据类型：BOOLEAN, INT32, INT64, FLOAT, DOUBLE, TEXT, STRING, TIMESTAMP, DATE, BLOB
 
-See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance analysis.
+**树模型测试**（`ReadTreeModel_AllDevices`）：
+- 5 个设备，跨 2 个数据库（root.db1, root.db2）
+- 非对齐设备：root.db1.d1（5 测量）、root.db1.d2（2 测量）、root.db2.d1（1 测量）
+- 对齐设备：root.db1.aligned_d1（3 测量）、root.db2.aligned_d1（3 测量）
+- 数据类型：INT32, INT64, FLOAT, DOUBLE, BOOLEAN, TEXT, STRING
 
----
+**值精确验证**（`ReadTreeModel_NonAlignedDevice_ValidateValues`）：
+- root.db2.d1 的 20 行 temperature 数据逐值验证
 
-## Differences from Java Implementation
-
-### Intentional Simplifications
-
-1. **API Design**: Simplified API inspired by Python version, easier to use
-2. **Encoding Fallback**: Unimplemented encodings fallback to Plain (compatibility over completeness)
-3. **Error Messages**: More user-friendly error messages
-
-### Not Yet Implemented
-
-1. **LZMA2 Compression**: Read-only support (decompression works)
-   - Reason: Maintains cross-platform compatibility
-   - Alternative: FastLZMA2Net exists but is Windows-only
-   - Workaround: Use ZSTD (better compression) or LZ4 (faster) for writing
-2. **CAMEL Encoding**: Double-only specialized encoding
-   - Reason: Low priority for typical time-series workloads
-3. **Advanced Query Features**: Time-range filters, aggregations (planned for future)
-4. **Statistics**: Min, max, count metadata (planned for future)
-
-### C#-Specific Enhancements
-
-1. **Modern .NET**: Uses .NET 10 features for better performance
-2. **Cross-Platform**: IronSnappy ensures no native library dependencies
-3. **Memory Efficiency**: Leverages .NET's efficient GC and span APIs
-4. **Async Support**: Ready for async/await patterns (future enhancement)
-
----
-
-## Production Readiness Assessment
-
-### ✅ Ready for Production
-
-**Suitable for**:
-- Time-series data storage with standard encodings
-- IoT sensor data (Gorilla encoding)
-- Metrics and monitoring data
-- Any workload using Plain, RLE, Gorilla, Dictionary, TS_2DIFF, or ZigZag encodings
-- Cross-platform deployments (Windows, Linux, macOS)
-
-**Strengths**:
-- Binary compatibility with Java
-- 98.6% test pass rate
-- Complete documentation
-- Performance benchmarking tools
-- Production-tested compression algorithms
-
-### ⚠️ Limitations
-
-**Not suitable for**:
-- Workloads requiring CHIMP, SPRINTZ, RLBE, or other unimplemented encodings
-- Applications requiring LZMA2 compression specifically
-- Gorilla encoding for Int64 values (use Float/Double instead)
-
-**Workarounds**:
-- Unimplemented encodings automatically fallback to Plain encoding
-- LZMA2 can be replaced with ZSTD (often better compression)
-- Int64 Gorilla limitation can use Float/Double for timestamps
-
----
-
-## Roadmap and Future Plans
-
-### Short Term (1-3 months)
-
-1. ✅ **Priority 1 & 2 Encodings** - COMPLETE
-   - RLE, Gorilla, ZigZag, Dictionary, TS_2DIFF
-
-2. ✅ **Advanced Encodings** - COMPLETE
-   - CHIMP, SPRINTZ, RLBE (all implemented)
-
-3. 📝 **Bug Fixes**
-   - Fix Gorilla Int64 decoding issue
-   - Address any issues reported by users
-
-4. 📝 **Documentation**
-   - Add more usage examples
-   - Create video tutorials
-   - Publish performance comparison with Java
-
-### Medium Term (3-6 months)
-
-1. ✅ **Additional Encodings** - COMPLETE
-   - CHIMP (high-precision floats) - Implemented
-   - SPRINTZ (sensor-optimized) - Implemented
-   - RLBE (run-length byte) - Implemented
-
-2. 📝 **Remaining Encoding**
-   - CAMEL (Double-only specialized) - Low priority
-
-3. 📝 **Advanced Features**
-   - Time-range query filters
-   - Statistics (min, max, count)
-   - Async/await API
-   - Parallel processing
-
-3. 📝 **Compression**
-   - LZMA2 implementation
-   - Compression benchmarks
-
-### Long Term (6-12 months)
-
-1. 📝 **Integration**
-   - Spark connector
-   - Flink integration
-   - Cloud storage adapters (Azure, AWS, GCP)
-
-2. 📝 **Optimization**
-   - SIMD acceleration
-   - Memory pool optimization
-   - Zero-copy operations
-
-3. 📝 **Tooling**
-   - File inspection tool
-   - Schema migration tool
-   - Debugging utilities
-
----
-
-## Dependencies
-
-### NuGet Packages
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| K4os.Compression.LZ4 | 1.3.8 | LZ4 compression |
-| ZstdSharp.Port | 0.8.7 | ZSTD compression |
-| IronSnappy | 1.3.1 | Snappy compression |
-| xunit | 2.9.2 | Unit testing |
-
-### Target Framework
-
-- .NET 10 (latest LTS)
-- C# 13 language features
-
----
-
-## Getting Started
-
-### Installation
+### 运行互操作测试
 
 ```bash
-# Clone repository
-git clone https://github.com/CritasWang/tsfile.git
-cd tsfile/csharp
+# 完整互操作测试（包含 Java 构建 + 文件生成 + C# 验证 + Java 反向验证）
+./run-java-interop-tests.sh
 
-# Build
-dotnet build --configuration Release
+# 仅运行 C# 测试（需要先生成 Java 测试文件）
+dotnet test csharp/tests/Apache.TsFile.Tests/Apache.TsFile.Tests.csproj
 
-# Run tests
-dotnet test --configuration Release
+# 仅运行综合互操作测试
+COMPREHENSIVE_INTEROP_DIR=/tmp/comprehensive-interop \
+  dotnet test csharp/tests/Apache.TsFile.Tests/Apache.TsFile.Tests.csproj \
+  --filter "ComprehensiveInteropTests"
 ```
 
-### Quick Example
+### 互操作测试覆盖矩阵
 
-```csharp
-using Apache.TsFile;
-using Apache.TsFile.Enums;
-using Apache.TsFile.Schema;
+**数据类型 × 编码 × 压缩**（360 文件）：
 
-// Write
-using var writer = new TsFileWriter("data.tsfile");
-var schema = new MeasurementSchema("temperature", TsDataType.Float, 
-                                   TsEncoding.Gorilla, CompressionType.Lz4);
-writer.RegisterDevice("sensor_1", new List<MeasurementSchema> { schema });
+| 数据类型 | 编码 | 压缩 |
+|----------|------|------|
+| INT32 | PLAIN, RLE, TS_2DIFF, GORILLA, ZIGZAG | UNCOMPRESSED, GZIP, LZ4, SNAPPY, ZSTD |
+| INT64 | PLAIN, RLE, TS_2DIFF, GORILLA, ZIGZAG | 同上 |
+| FLOAT | PLAIN, GORILLA, GORILLA_V1, TS_2DIFF | 同上 |
+| DOUBLE | PLAIN, GORILLA, GORILLA_V1, TS_2DIFF | 同上 |
+| BOOLEAN | PLAIN, RLE | 同上 |
+| TEXT | PLAIN, DICTIONARY | 同上 |
 
-var tablet = new Tablet("sensor_1", new[] { schema }, 1000);
-tablet.AddRow(DateTimeOffset.Now.ToUnixTimeMilliseconds(), 25.5f);
-writer.Write(tablet);
-writer.Close();
-
-// Read
-using var reader = new TsFileReader("data.tsfile");
-var result = reader.Query("sensor_1");
-Console.WriteLine($"Temperature: {result.GetColumn("temperature")[0]}°C");
-```
-
-See [USER_MANUAL.md](USER_MANUAL.md) for complete documentation.
+**数据模式**：sequential（递增）、repeated（重复）、alternating（交替）
 
 ---
 
----
+## 与 Java 实现的差异
 
-## Java Interoperability Testing
+### 已知差异
 
-A comprehensive Java-C# interoperability test suite has been implemented to ensure binary format compatibility.
+1. **LZMA2 压缩**：仅支持解压缩（读取 Java 生成的文件）
+2. **CAMEL 编码**：未实现（低优先级，仅 Double 类型）
+3. **Gorilla Int64**：编码器存在已知问题（解码器正常工作）
+4. **高级查询**：无过滤表达式、聚合等高级查询功能
 
-### Test Suite Structure
+### C# 特有优势
 
-**Location**: 
-- Java Generator: `java/interop-tests/`
-- C# Validator: `csharp/tests/Apache.TsFile.InteropTests/`
-- Automation: `run-interop-tests.sh`
-
-**Coverage**: 360 test files
-- 6 data types: INT32, INT64, FLOAT, DOUBLE, BOOLEAN, TEXT
-- 7 encodings: PLAIN, RLE, TS_2DIFF, GORILLA, GORILLA_V1, ZIGZAG, DICTIONARY
-- 5 compressions: UNCOMPRESSED, GZIP, LZ4, SNAPPY, ZSTD
-- 3 data patterns: sequential, repeated, alternating
-
-### Test Results
-
-✅ **Java Generator**: Successfully creates 360 test files
-✅ **C# Validator**: Can read and validate Java-generated files
-✅ **V4 Format**: Full support for Java V4 format (unified API)
-
-### Running Interop Tests
-
-```bash
-# From repository root
-./run-interop-tests.sh
-
-# Or manually:
-cd java/interop-tests && mvn clean package && java -jar target/interop-tests-1.0-SNAPSHOT-jar-with-dependencies.jar
-cd ../../csharp/tests/Apache.TsFile.InteropTests && dotnet test
-```
-
-### Documentation
-
-- **Test Results**: See `INTEROP_TEST_RESULTS.md`
-- **Implementation Details**: See `INTEROP_IMPLEMENTATION_SUMMARY.md`
-- **Java README**: See `java/interop-tests/README.md`
-- **C# README**: See `csharp/tests/Apache.TsFile.InteropTests/README.md`
+1. **跨平台**：IronSnappy 纯 C# 实现，无原生依赖
+2. **现代 .NET**：使用 .NET 10 特性
+3. **简化 API**：比 Java 更易用的接口设计
 
 ---
 
-## Conclusion
+## 依赖
 
-The C# implementation of Apache TSFile is **production-ready for time-series workloads** that use standard encodings. It provides:
+| 包 | 版本 | 用途 |
+|----|------|------|
+| K4os.Compression.LZ4 | 1.3.8 | LZ4 压缩 |
+| ZstdSharp.Port | 0.8.7 | ZSTD 压缩 |
+| IronSnappy | 1.3.1 | Snappy 压缩（纯 C#） |
+| SharpCompress | 0.41.0 | LZMA2 解压缩 |
+| xunit | 2.9.2 | 单元测试 |
 
-✅ **Complete data type support** (100% Java compatibility)
-✅ **14 encoding algorithms** (includes GORILLA_V1, BITMAP, REGULAR, DIFF, CHIMP, SPRINTZ, RLBE)
-✅ **Production-grade compression** (LZ4, ZSTD, Snappy, GZIP)
-✅ **Binary format compatibility** (verified with 360 interop tests)
-✅ **Unified API for V3 and V4** (V4 is default, auto-detection on read)
-✅ **Comprehensive testing** (99.5% test pass rate, 189 tests)
-✅ **Complete documentation** (~2,800 lines across 6 documents)
-✅ **Performance benchmarking** (with statistical rigor)
-✅ **Interoperability test suite** (Java-C# cross-validation)
-
-**Status**: Ready for production use with documented limitations.
-
-**New in v1.1.0**:
-- Unified API: Single TsFileWriter/TsFileReader for both V3 and V4 formats
-- V4 as default write format (matches Java behavior)
-- Auto-detection of file version on read
-- Tree model and table model data organization support
-- Removed V4-suffixed classes (TsFileWriterV4, TsFileReaderV4)
-- **Advanced encodings**: CHIMP, SPRINTZ, RLBE fully implemented
+**目标框架**: .NET 9/10
 
 ---
 
-## Contact and Support
+## CI/CD
 
-- **Documentation**: See `/csharp/` directory for all guides
-- **Issues**: Report on GitHub
-- **Contributions**: See ROADMAP.md for areas needing help
+GitHub Actions 工作流（`.github/workflows/csharp-ci.yml`）包含：
+
+1. **构建和测试**：跨平台（Ubuntu, Windows, macOS）
+2. **代码质量分析**
+3. **Java 互操作测试**：完整的 Java 文件生成 + C# 验证 + Java 反向验证
+4. **代码覆盖率**
+5. **性能基准测试**
+6. **安全扫描**
+7. **NuGet 包构建**
 
 ---
 
-*Last Updated: 2026-02-09 (Updated implementation status: 14/15 encodings, 189 tests)*
+*最后更新: 2026-02-12（196 测试，14/15 编码，450+ 互操作文件验证）*

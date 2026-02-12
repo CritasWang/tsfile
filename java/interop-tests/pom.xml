@@ -150,6 +150,24 @@
                         </configuration>
                     </execution>
                     <execution>
+                        <id>generate-comprehensive-interop-files</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>org.apache.tsfile.interop.ComprehensiveInteropGenerator</mainClass>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>validate-csharp-files</id>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>org.apache.tsfile.interop.CSharpFileValidator</mainClass>
+                        </configuration>
+                    </execution>
+                    <execution>
                         <id>generate-v3-files</id>
                         <goals>
                             <goal>java</goal>

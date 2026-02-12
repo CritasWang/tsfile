@@ -75,8 +75,47 @@ public class TsFileReader : IDisposable
     public QueryResult Query(string deviceName, string[]? measurements = null,
         long? startTime = null, long? endTime = null)
     {
+        string originalDeviceName = deviceName;
+        
+        // Try direct lookup first, then parse deviceName → tableName for table model
         if (!_schemas!.TryGetValue(deviceName, out var schema))
-            throw new ArgumentException($"Device {deviceName} not found in file");
+        {
+            // Try lowercase (writer lowercases table names to match Java)
+            var lowerName = deviceName.ToLowerInvariant();
+            if (!_schemas.TryGetValue(lowerName, out schema))
+            {
+                // Try StringArrayDeviceID table name extraction (for table model)
+                var deviceId = new StringArrayDeviceID(deviceName);
+                var tableName = deviceId.GetTableName().ToLowerInvariant();
+                if (_schemas.TryGetValue(tableName, out schema))
+                {
+                    deviceName = tableName;
+                }
+                else
+                {
+                    // For V4 tree model: try progressively shorter dot-prefixes as table name
+                    // e.g., "root.db1.d1" → try "root.db1", then "root"
+                    var parts = deviceName.Split('.');
+                    bool found = false;
+                    for (int prefixLen = parts.Length - 1; prefixLen >= 1; prefixLen--)
+                    {
+                        var prefix = string.Join(".", parts[..prefixLen]);
+                        if (_schemas.TryGetValue(prefix, out schema))
+                        {
+                            deviceName = prefix;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        throw new ArgumentException($"Device {deviceName} not found in file");
+                }
+            }
+            else
+            {
+                deviceName = lowerName;
+            }
+        }
 
         // Simplified C# V3 files have no index nodes - use chunk scanning
         if (_tableIndexNodes == null || _tableIndexNodes.Count == 0)
@@ -84,7 +123,10 @@ public class TsFileReader : IDisposable
             return QueryV3Simplified(deviceName, schema, measurements, startTime, endTime);
         }
 
-        return QueryV4(deviceName, schema, measurements, startTime, endTime);
+        // For V4 tree model: if original device name differs from table name,
+        // pass it as a device filter to only read that specific device's data
+        string? deviceFilter = (originalDeviceName != deviceName) ? originalDeviceName : null;
+        return QueryV4(deviceName, schema, measurements, startTime, endTime, deviceFilter);
     }
     
     /// <summary>
@@ -591,7 +633,8 @@ public class TsFileReader : IDisposable
                 TsDataType.Int64 or TsDataType.Timestamp => decoder.ReadLong(data, ref offset),
                 TsDataType.Float => decoder.ReadFloat(data, ref offset),
                 TsDataType.Double => decoder.ReadDouble(data, ref offset),
-                TsDataType.Text or TsDataType.String => decoder.ReadString(data, ref offset),
+                TsDataType.Text or TsDataType.String or TsDataType.Blob => decoder.ReadString(data, ref offset),
+                TsDataType.Date => decoder.ReadInt(data, ref offset),
                 _ => throw new NotSupportedException($"Data type {dataType} not supported")
             };
             
@@ -757,7 +800,7 @@ public class TsFileReader : IDisposable
     #region V4 Query Implementation
 
     private QueryResult QueryV4(string deviceName, TableSchema schema, string[]? measurements,
-        long? startTime, long? endTime)
+        long? startTime, long? endTime, string? deviceFilter = null)
     {
         var result = new QueryResult(deviceName, schema);
 
@@ -776,13 +819,18 @@ public class TsFileReader : IDisposable
         }
 
         // Navigate to find timeseries metadata for this device
-        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, deviceName, measurements);
+        // For V3: deviceFilter is the full device path (set by NavigateToTimeseriesMetadata)
+        // For V4 tree model: deviceFilter is the original device path passed from Query()
+        var timeseriesMetadataList = NavigateToTimeseriesMetadata(rootNode, deviceName, measurements, deviceFilter);
 
         // For Tree Model files (no table schemas), dynamically populate measurements from TimeseriesMetadata
         if (schema.Measurements.Count == 0)
         {
             foreach (var tsMetadata in timeseriesMetadataList)
             {
+                // Skip time chunk (empty measurement ID) and Vector type entries
+                if (string.IsNullOrEmpty(tsMetadata.MeasurementId) || tsMetadata.DataType == TsDataType.Vector)
+                    continue;
                 var measurementSchema = new MeasurementSchema(
                     tsMetadata.MeasurementId,
                     tsMetadata.DataType,
@@ -809,14 +857,14 @@ public class TsFileReader : IDisposable
     }
 
     private List<TimeseriesMetadataV4> NavigateToTimeseriesMetadata(MetadataIndexNode rootNode,
-        string deviceName, string[]? measurements)
+        string deviceName, string[]? measurements, string? externalDeviceFilter = null)
     {
         var result = new List<TimeseriesMetadataV4>();
         var measurementFilter = measurements?.ToHashSet();
 
         // For V3, deviceName is the full device path (e.g., "root.test.d0")
-        // We need to filter to the specific device in the index tree
-        string? deviceFilter = (_fileVersion == TsFileConstants.Version) ? deviceName : null;
+        // For V4 tree model, externalDeviceFilter is the full device path
+        string? deviceFilter = (_fileVersion == TsFileConstants.Version) ? deviceName : externalDeviceFilter;
 
         NavigateNode(rootNode, result, measurementFilter, deviceFilter);
 
@@ -887,18 +935,33 @@ public class TsFileReader : IDisposable
     private void ReadTimeseriesMetadataFromNode(MetadataIndexNode node, List<TimeseriesMetadataV4> result,
         HashSet<string>? measurementFilter)
     {
-        foreach (var entry in node.Entries)
+        // In Java V4, LeafMeasurement entries are range markers:
+        // each entry points to the FIRST TimeseriesMetadata at that offset.
+        // All TimeseriesMetadata between consecutive entries (or up to endOffset) must be read.
+        var entries = node.Entries.OfType<MeasurementMetadataIndexEntry>().ToList();
+        
+        for (int i = 0; i < entries.Count; i++)
         {
-            if (entry is MeasurementMetadataIndexEntry measurementEntry)
+            var entry = entries[i];
+            long rangeEnd = (i + 1 < entries.Count) ? entries[i + 1].Offset : node.EndOffset;
+            
+            // If measurement filter is set and this entry's name doesn't match,
+            // we still need to check — the entry name is just the first measurement in the range.
+            // For table model, the first entry is "" (time), and value measurements follow.
+            // We read all and filter individually.
+            _fileStream.Position = entry.Offset;
+            
+            while (_fileStream.Position < rangeEnd)
             {
-                // Check measurement filter
-                if (measurementFilter != null && !measurementFilter.Contains(measurementEntry.Name))
-                    continue;
-
-                // Read timeseries metadata at this offset
-                _fileStream.Position = measurementEntry.Offset;
                 var tsMetadata = TimeseriesMetadataV4.Deserialize(_reader, ReadUnsignedVarInt, ReadVarIntString,
                     () => ReadInt64BigEndian(_reader), needChunkMetadata: true);
+                
+                // Apply measurement filter
+                if (measurementFilter != null && 
+                    !string.IsNullOrEmpty(tsMetadata.MeasurementId) &&
+                    !measurementFilter.Contains(tsMetadata.MeasurementId))
+                    continue;
+                
                 result.Add(tsMetadata);
             }
         }
@@ -978,10 +1041,18 @@ public class TsFileReader : IDisposable
         var chunkDataStart = _fileStream.Position;
         var chunkDataEnd = chunkDataStart + dataSize;
 
-        while (_fileStream.Position < chunkDataEnd)
+        try
         {
-            ReadPageV4(result, measurementId, chunkDataType, encoding, compression,
-                startTime, endTime, isAligned, isTimeChunk, hasMultiplePages);
+            while (_fileStream.Position < chunkDataEnd)
+            {
+                ReadPageV4(result, measurementId, chunkDataType, encoding, compression,
+                    startTime, endTime, isAligned, isTimeChunk, hasMultiplePages);
+            }
+        }
+        catch (Exception)
+        {
+            // Skip chunks with unsupported data types or decoder errors
+            _fileStream.Position = chunkDataEnd;
         }
     }
 
@@ -1152,9 +1223,16 @@ public class TsFileReader : IDisposable
                 _reader.ReadBytes(40); // min(8) + max(8) + first(8) + last(8) + sum(8)
                 break;
             case TsDataType.Text:
-            case TsDataType.String:
-                // first(4+len) + last(4+len), no min/max
+                // BinaryStatistics: first(4+len) + last(4+len), no min/max
                 for (int i = 0; i < 2; i++)
+                {
+                    var len = ReadInt32BigEndian(_reader);
+                    if (len > 0) _reader.ReadBytes(len);
+                }
+                break;
+            case TsDataType.String:
+                // StringStatistics: first(4+len) + last(4+len) + min(4+len) + max(4+len)
+                for (int i = 0; i < 4; i++)
                 {
                     var len = ReadInt32BigEndian(_reader);
                     if (len > 0) _reader.ReadBytes(len);

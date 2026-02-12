@@ -52,21 +52,48 @@ public class TableSchema
     public int MaxIdLevel { get; set; }
     
     /// <summary>
-    /// Initializes a new instance of the TableSchema class.
+    /// Gets the list of column categories (TAG, FIELD) parallel to Measurements.
     /// </summary>
+    public List<ColumnCategory> ColumnCategories { get; }
+
     public TableSchema(string tableName)
     {
         if (string.IsNullOrWhiteSpace(tableName))
             throw new ArgumentException("Table name cannot be null or empty", nameof(tableName));
         
-        TableName = tableName;
+        TableName = tableName.ToLowerInvariant();
         Measurements = new List<MeasurementSchema>();
+        ColumnCategories = new List<ColumnCategory>();
+    }
+
+    /// <summary>
+    /// Initializes a new instance with explicit column schemas (TAG/FIELD).
+    /// Matches Java's TableSchema(String, List&lt;ColumnSchema&gt;) constructor.
+    /// </summary>
+    public TableSchema(string tableName, List<ColumnSchema> columnSchemaList)
+    {
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("Table name cannot be null or empty", nameof(tableName));
+        if (columnSchemaList == null || columnSchemaList.Count == 0)
+            throw new ArgumentException("Column schema list cannot be null or empty", nameof(columnSchemaList));
+
+        TableName = tableName.ToLowerInvariant();
+        Measurements = new List<MeasurementSchema>();
+        ColumnCategories = new List<ColumnCategory>();
+        ColumnSchemas = new List<ColumnSchema>(columnSchemaList);
+
+        foreach (var col in columnSchemaList)
+        {
+            Measurements.Add(new MeasurementSchema(
+                col.Name.ToLowerInvariant(), col.DataType, col.Encoding, col.Compression));
+            ColumnCategories.Add(col.Category);
+        }
     }
     
     /// <summary>
     /// Adds a measurement schema to this table.
     /// </summary>
-    public void AddMeasurement(MeasurementSchema measurement)
+    public void AddMeasurement(MeasurementSchema measurement, ColumnCategory category = ColumnCategory.Field)
     {
         if (measurement == null)
             throw new ArgumentNullException(nameof(measurement));
@@ -75,6 +102,54 @@ public class TableSchema
             throw new ArgumentException($"Measurement {measurement.MeasurementName} already exists in table");
         
         Measurements.Add(measurement);
+        ColumnCategories.Add(category);
+    }
+
+    /// <summary>
+    /// Finds the index of a column by name, or -1 if not found.
+    /// </summary>
+    public int FindColumnIndex(string columnName)
+    {
+        var lower = columnName.ToLowerInvariant();
+        for (int i = 0; i < Measurements.Count; i++)
+        {
+            if (Measurements[i].MeasurementName.Equals(lower, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Gets the number of TAG columns.
+    /// </summary>
+    public int GetTagColumnCount() => ColumnCategories.Count(c => c == ColumnCategory.Tag);
+
+    /// <summary>
+    /// Gets the indices of TAG columns.
+    /// </summary>
+    public List<int> GetTagColumnIndexes()
+    {
+        var result = new List<int>();
+        for (int i = 0; i < ColumnCategories.Count; i++)
+        {
+            if (ColumnCategories[i] == ColumnCategory.Tag)
+                result.Add(i);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Gets the indices of FIELD columns.
+    /// </summary>
+    public List<int> GetFieldColumnIndexes()
+    {
+        var result = new List<int>();
+        for (int i = 0; i < ColumnCategories.Count; i++)
+        {
+            if (ColumnCategories[i] == ColumnCategory.Field)
+                result.Add(i);
+        }
+        return result;
     }
     
     /// <summary>
@@ -140,17 +215,15 @@ public class TableSchema
             var columnSchema = ColumnSchema.Deserialize(reader, readVarInt, readVarIntString);
             tableSchema.ColumnSchemas.Add(columnSchema);
             
-            // Convert FIELD columns to MeasurementSchema for backward compatibility
-            if (columnSchema.Category == ColumnCategory.Field)
-            {
-                var measurement = new MeasurementSchema(
-                    columnSchema.Name,
-                    columnSchema.DataType,
-                    columnSchema.Encoding,
-                    columnSchema.Compression
-                );
-                tableSchema.Measurements.Add(measurement);
-            }
+            // Add to Measurements and ColumnCategories lists
+            var measurement = new MeasurementSchema(
+                columnSchema.Name,
+                columnSchema.DataType,
+                columnSchema.Encoding,
+                columnSchema.Compression
+            );
+            tableSchema.Measurements.Add(measurement);
+            tableSchema.ColumnCategories.Add(columnSchema.Category);
         }
         
         return tableSchema;
@@ -174,7 +247,7 @@ public class TableSchema
 
         // For tree model, use the full device path as table name
         // This ensures each device has its own logical table
-        var schema = new TableSchema(devicePath)
+        var schema = new TableSchema(devicePath.ToLowerInvariant())
         {
             IsLogicalTable = true,
             MaxIdLevel = Math.Max(1, segments.Length - segmentNumForTableName + 1)

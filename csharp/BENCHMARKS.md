@@ -4,8 +4,8 @@ Comprehensive performance analysis of all implemented encoding algorithms.
 
 ## Test Environment
 
-- **Platform**: .NET 10.0
-- **Date**: 2026-02-02
+- **Platform**: .NET 9/10
+- **Date**: 2026-02-12
 - **Hardware**: GitHub Actions Runner
 
 ## Benchmark Methodology
@@ -22,12 +22,19 @@ Each encoding was tested with:
 
 | Encoding | Best Use Case | Compression Ratio | Speed |
 |----------|---------------|-------------------|-------|
+| **Plain** | Baseline/random data | 1x | Very Fast |
 | **RLE** | Repeated values | 10-50x | Fast |
 | **ZigZag** | Small integers (-127 to 127) | 3-4x | Very Fast |
 | **Gorilla** | Time-series floats | 2-10x | Medium |
+| **GorillaV1** | Legacy float/double | 2-10x | Medium |
 | **Dictionary** | Low-cardinality strings | 2-5x | Fast |
 | **TS_2DIFF** | Regular timestamps | 4-8x | Fast |
-| **Plain** | Baseline/random data | 1x | Very Fast |
+| **Diff** | Monotonic integers | 3-5x | Fast |
+| **CHIMP** | High-precision floats | 2-10x | Medium |
+| **SPRINTZ** | Sensor data | 3-8x | Medium |
+| **RLBE** | Repeated byte patterns | 2-6x | Fast |
+
+> 注意：以上 14 种编码均已实现并通过 Java 互操作验证（360 文件）。仅 CAMEL 编码未实现。
 
 ---
 
@@ -681,6 +688,6 @@ This provides automated performance validation on every push.
 
 ---
 
-**Last Updated**: 2026-02-03  
-**Version**: 1.0  
+**Last Updated**: 2026-02-12  
+**Version**: 1.2  
 **Authors**: Apache TSFile C# Team

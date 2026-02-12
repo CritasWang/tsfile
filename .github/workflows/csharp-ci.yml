@@ -167,6 +167,7 @@ jobs:
           mkdir -p /tmp/interop-tests/java-comprehensive
           mkdir -p /tmp/interop-tests/java-table-model-v4
           mkdir -p /tmp/interop-tests/csharp-v4
+          mkdir -p /tmp/interop-tests/comprehensive-interop
 
       # Step 0: Generate Java V3 test files (standalone project with tsfile:1.1.3)
       - name: Generate Java V3 test files
@@ -183,22 +184,29 @@ jobs:
         working-directory: ./java/interop-tests
         run: |
           echo "=== Generating Java V4 simple test files ==="
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.V4TestFileGenerator" -Dexec.args="/tmp/interop-tests/java-v4" -Dexec.classpathScope=compile -q
+          mvn exec:java@generate-v4-files -Dexec.args="/tmp/interop-tests/java-v4" -q
           echo "Generated V4 simple files: $(ls /tmp/interop-tests/java-v4/*.tsfile 2>/dev/null | wc -l)"
 
       - name: Generate Java comprehensive files (360 files)
         working-directory: ./java/interop-tests
         run: |
           echo "=== Generating comprehensive Java test files ==="
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.TsFileInteropGenerator" -Dexec.args="/tmp/interop-tests/java-comprehensive" -Dexec.classpathScope=compile -q
+          mvn exec:java@generate-comprehensive-files -Dexec.args="/tmp/interop-tests/java-comprehensive" -q
           echo "Generated comprehensive files: $(ls /tmp/interop-tests/java-comprehensive/*.tsfile 2>/dev/null | wc -l)"
 
       - name: Generate Java Table Model V4 files (90 files)
         working-directory: ./java/interop-tests
         run: |
           echo "=== Generating Table Model V4 test files ==="
-          mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.TableModelV4Generator" -Dexec.args="/tmp/interop-tests/java-table-model-v4" -Dexec.classpathScope=compile -q
+          mvn exec:java@generate-table-model-v4-files -Dexec.args="/tmp/interop-tests/java-table-model-v4" -q
           echo "Generated table model files: $(ls /tmp/interop-tests/java-table-model-v4/*.tsfile 2>/dev/null | wc -l)"
+
+      - name: Generate comprehensive interop files (table + tree model)
+        working-directory: ./java/interop-tests
+        run: |
+          echo "=== Generating comprehensive interop test files ==="
+          mvn exec:java@generate-comprehensive-interop-files -Dexec.args="/tmp/interop-tests/comprehensive-interop" -q
+          echo "Generated comprehensive interop files: $(ls /tmp/interop-tests/comprehensive-interop/*.tsfile 2>/dev/null | wc -l)"
 
       # Step 2: C# reads Java V4 files
       - name: C# reads Java V4 simple files
@@ -221,6 +229,13 @@ jobs:
         run: |
           echo "=== C# reading Java Table Model V4 files ==="
           dotnet test ${{ env.TEST_PATH }} --configuration Release --no-build --filter "FullyQualifiedName~TsFileV4InteropTests.ReadJavaTableModelV4Files" --verbosity normal
+
+      - name: C# reads comprehensive interop files (table + tree model)
+        env:
+          COMPREHENSIVE_INTEROP_DIR: /tmp/interop-tests/comprehensive-interop
+        run: |
+          echo "=== C# reading comprehensive interop files ==="
+          dotnet test ${{ env.TEST_PATH }} --configuration Release --no-build --filter "FullyQualifiedName~ComprehensiveInteropTests" --verbosity normal
 
       - name: C# reads Java V3 files
         env:
@@ -255,7 +270,7 @@ jobs:
           fi
           for file in "${files[@]}"; do
             echo "Validating: $(basename $file)"
-            if mvn exec:java -Dexec.mainClass="org.apache.tsfile.interop.CSharpFileValidator" -Dexec.args="$file" -q 2>&1; then
+            if mvn exec:java@validate-csharp-files -Dexec.args="$file" -q 2>&1; then
               echo "  ✓ Validation passed"
               success=$((success + 1))
             else
@@ -278,6 +293,7 @@ jobs:
           JAVA_TABLE_MODEL_V4_DIR: /tmp/interop-tests/java-table-model-v4
           JAVA_V3_DIR: /tmp/interop-tests/java-v3
           CSHARP_V4_OUTPUT_DIR: /tmp/interop-tests/csharp-v4
+          COMPREHENSIVE_INTEROP_DIR: /tmp/interop-tests/comprehensive-interop
         run: |
           echo "=== Running full C# interop test suite ==="
           dotnet test ${{ env.TEST_PATH }} --configuration Release --no-build --filter "FullyQualifiedName!~GenerateCSharpV4FilesForJavaInterop" --verbosity normal
@@ -299,6 +315,7 @@ jobs:
           echo "  - Java V4 simple files: $(ls /tmp/interop-tests/java-v4/*.tsfile 2>/dev/null | wc -l)"
           echo "  - Java comprehensive files: $(ls /tmp/interop-tests/java-comprehensive/*.tsfile 2>/dev/null | wc -l)"
           echo "  - Java Table Model V4 files: $(ls /tmp/interop-tests/java-table-model-v4/*.tsfile 2>/dev/null | wc -l)"
+          echo "  - Comprehensive interop files: $(ls /tmp/interop-tests/comprehensive-interop/*.tsfile 2>/dev/null | wc -l)"
           echo "  - C# V4 files: $(ls /tmp/interop-tests/csharp-v4/*.tsfile 2>/dev/null | wc -l)"
           echo ""
           echo "Test Results:"
@@ -306,6 +323,7 @@ jobs:
           echo "  - Java V4 -> C# (simple): SUPPORTED"
           echo "  - Java V4 -> C# (comprehensive): SUPPORTED (all encodings/compressions)"
           echo "  - Java V4 -> C# (table model): SUPPORTED"
+          echo "  - Java V4 -> C# (comprehensive interop): SUPPORTED (multi-table + multi-device)"
           echo "  - C# V4 -> C# (round-trip): SUPPORTED"
           echo "  - C# -> Java: SUPPORTED"
 

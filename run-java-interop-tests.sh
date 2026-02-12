@@ -20,6 +20,7 @@ JAVA_V4_DIR="$INTEROP_TEST_DIR/java-v4"
 JAVA_COMPREHENSIVE_DIR="$INTEROP_TEST_DIR/java-comprehensive"
 JAVA_TABLE_MODEL_V4_DIR="$INTEROP_TEST_DIR/java-table-model-v4"
 CSHARP_V4_DIR="$INTEROP_TEST_DIR/csharp-v4"
+COMPREHENSIVE_INTEROP_DIR="$INTEROP_TEST_DIR/comprehensive-interop"
 
 # Print functions
 print_header() {
@@ -92,12 +93,14 @@ setup_test_directories() {
     mkdir -p "$JAVA_COMPREHENSIVE_DIR"
     mkdir -p "$JAVA_TABLE_MODEL_V4_DIR"
     mkdir -p "$CSHARP_V4_DIR"
+    mkdir -p "$COMPREHENSIVE_INTEROP_DIR"
 
     print_success "Test directories created"
     print_info "Java V3 output: $JAVA_V3_DIR"
     print_info "Java V4 output: $JAVA_V4_DIR"
     print_info "Java Comprehensive output: $JAVA_COMPREHENSIVE_DIR"
     print_info "Java Table Model V4 output: $JAVA_TABLE_MODEL_V4_DIR"
+    print_info "Comprehensive Interop output: $COMPREHENSIVE_INTEROP_DIR"
     print_info "C# V4 output: $CSHARP_V4_DIR"
     echo ""
 }
@@ -290,6 +293,56 @@ generate_table_model_v4_files() {
     echo ""
 }
 
+# Generate comprehensive interop files (table model + tree model)
+generate_comprehensive_interop_files() {
+    print_header "Step 1d: Generating Comprehensive Interop Files (Table + Tree Model)"
+
+    cd "$SCRIPT_DIR/java/interop-tests"
+
+    print_info "Running ComprehensiveInteropGenerator..."
+
+    mvn exec:java@generate-comprehensive-interop-files \
+        -Dexec.args="$COMPREHENSIVE_INTEROP_DIR" \
+        -q
+
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        print_error "Failed to generate comprehensive interop files (exit code: $exit_code)"
+        return 1
+    fi
+
+    local file_count=$(ls "$COMPREHENSIVE_INTEROP_DIR"/*.tsfile 2>/dev/null | wc -l)
+    print_success "Generated $file_count comprehensive interop test files"
+    print_info "Output directory: $COMPREHENSIVE_INTEROP_DIR"
+    print_info "Metadata: $COMPREHENSIVE_INTEROP_DIR/comprehensive-metadata.json"
+
+    echo ""
+}
+
+# C# reads comprehensive interop files (table model + tree model)
+test_csharp_reads_comprehensive_interop() {
+    print_header "Step 2d: C# Reading Comprehensive Interop Files"
+
+    cd "$SCRIPT_DIR"
+    export COMPREHENSIVE_INTEROP_DIR="$COMPREHENSIVE_INTEROP_DIR"
+
+    dotnet test csharp/tests/Apache.TsFile.Tests/Apache.TsFile.Tests.csproj \
+        --configuration Release \
+        --no-build \
+        --filter "FullyQualifiedName~ComprehensiveInteropTests" \
+        --verbosity normal
+
+    local exit_code=$?
+
+    if [ $exit_code -eq 0 ]; then
+        print_success "C# successfully validated comprehensive interop files"
+    else
+        print_error "Comprehensive interop tests failed"
+    fi
+    echo ""
+}
+
 # C# reads Java V3 files
 test_csharp_reads_java_v3() {
     print_header "Step 1.5: C# Reading Java V3 Files (Experimental)"
@@ -434,24 +487,23 @@ test_java_reads_csharp_v4() {
             # Capture exit code and output
             local output
             local exit_code
-            output=$(mvn exec:java \
-                -Dexec.mainClass="org.apache.tsfile.interop.CSharpFileValidator" \
+            output=$(mvn exec:java@validate-csharp-files \
                 -Dexec.args="$file" \
                 2>&1)
             exit_code=$?
 
             if [ $exit_code -eq 0 ]; then
                 print_success "  ✓ Validation passed"
-                ((success_count++))
+                ((success_count++)) || true
             elif [ $exit_code -eq 1 ]; then
                 # Exit code 1: Format incompatibility (expected)
                 print_warning "  ⚠ Format incompatibility (expected during alignment)"
-                ((fail_count++))
+                ((fail_count++)) || true
             else
                 # Exit code 2 or other: Real error
                 print_error "  ✗ Validation error (exit code: $exit_code)"
                 echo "$output" | grep -i "error" | head -3
-                ((error_count++))
+                ((error_count++)) || true
             fi
         fi
     done
@@ -508,6 +560,7 @@ print_test_summary() {
     echo "  - Java V4 → C# (simple): ✓ SUPPORTED (tree model reading works)"
     echo "  - Java V4 → C# (comprehensive): ✓ SUPPORTED (tree model, all encodings/compressions)"
     echo "  - Java V4 → C# (table model): ✓ SUPPORTED (table model reading works)"
+    echo "  - Java V4 → C# (comprehensive interop): ✓ SUPPORTED (multi-table + multi-device)"
     echo "  - C# V4 → C# (round-trip): ✓ SUPPORTED (tree + table model write/read)"
     echo "  - C# → Java: ✓ SUPPORTED (Java reads C#-generated V4 files)"
     echo ""
@@ -573,9 +626,11 @@ main() {
     generate_java_v4_files
     generate_comprehensive_java_files
     generate_table_model_v4_files
+    generate_comprehensive_interop_files
     test_csharp_reads_java_v4
     test_csharp_reads_comprehensive_files
     test_csharp_reads_table_model_v4
+    test_csharp_reads_comprehensive_interop
     generate_csharp_v4_files
 
     if [ "$skip_java_validation" = false ]; then

@@ -22,20 +22,20 @@ Apache TSFile is a columnar storage file format designed for time series data. T
 
 ### 1.1 Features
 
-- ✅ **Multiple Data Types**: Boolean, Int32, Int64, Float, Double, Text
-- ✅ **Multiple Encodings**: Plain, RLE, Gorilla, ZigZag, and more
-- ✅ **Multiple Compressions**: GZIP, LZ4, ZSTD, Snappy
-- ✅ **Batch Operations**: Efficient columnar writes with Tablet
-- ✅ **Query Support**: Read specific devices and time ranges
-- ✅ **Java Compatibility**: Read/write files compatible with Java implementation
-- ✅ **V3 and V4 Format Support**: Unified API with V4 as default, auto-detection on read
-- ✅ **Tree and Table Model**: Support both device/measurement and table/column organization
+- ✅ **13 种数据类型**: Boolean, Int32, Int64, Float, Double, Text, String, Timestamp, Date, Blob 等
+- ✅ **14/15 编码**: Plain, RLE, Gorilla, GorillaV1, ZigZag, Dictionary, TS_2DIFF, Diff, Bitmap, Regular, CHIMP, SPRINTZ, RLBE, Freq
+- ✅ **5/6 压缩**: GZIP, LZ4, ZSTD, Snappy, Uncompressed（LZMA2 仅读取）
+- ✅ **批量操作**: Tablet API 高效列式写入
+- ✅ **查询支持**: 按设备/表名查询
+- ✅ **Java 兼容**: 450+ 互操作文件验证通过
+- ✅ **V3 + V4 格式**: 统一 API，V4 为默认，读取时自动检测
+- ✅ **树模型 + 表模型**: 对齐/非对齐时间序列 + TAG/FIELD 列
 
 ### 1.2 System Requirements
 
-- .NET 10.0 or higher
-- Windows, Linux, or macOS
-- 64-bit operating system (recommended)
+- .NET 9.0 或更高版本
+- Windows, Linux, macOS
+- 64 位操作系统（推荐）
 
 ## 2. Installation
 
@@ -458,11 +458,18 @@ if (value != null)
 | Encoding | Best For | Supported Types |
 |----------|----------|-----------------|
 | **Plain** | Mixed data, default | All types |
-| **Rle** | Repeated values | Boolean, Int32, Int64 |
-| **Ts2Diff** | Regular timestamps | Int32, Int64 |
-| **Gorilla** | Time-series floats | Float, Double |
+| **RLE** | Repeated values | Boolean, Int32, Int64 |
+| **TS_2DIFF** | Regular timestamps | Int32, Int64, Float, Double |
+| **Gorilla** | Time-series floats | Float, Double, Int32 |
+| **GorillaV1** | Legacy float/double | Float, Double |
 | **ZigZag** | Small integers | Int32, Int64 |
-| **Dictionary** | Low-cardinality text | Text |
+| **Dictionary** | Low-cardinality text | Text, String |
+| **Diff** | Monotonic integers | Int32, Int64 |
+| **Bitmap** | Boolean data | Boolean |
+| **Regular** | Regular intervals | Int64 |
+| **CHIMP** | High-precision floats | Float, Double, Int32, Int64 |
+| **SPRINTZ** | Sensor data | Int32, Int64, Float, Double |
+| **RLBE** | Repeated byte patterns | Int32, Int64 |
 
 ### 8.2 Choosing Encoding
 
@@ -488,20 +495,28 @@ new MeasurementSchema("status", TsDataType.Text,
     encoding: TsEncoding.Dictionary)
 ```
 
-### 8.3 Encoding Performance
+### 8.3 编码选择建议
 
 ```csharp
-// Current implementation defaults to Plain encoding
-// Future versions will implement additional encodings
+// 传感器温度数据 → Gorilla（缓慢变化的浮点数）
+new MeasurementSchema("temperature", TsDataType.Float,
+    encoding: TsEncoding.Gorilla, compression: CompressionType.Lz4)
 
-// Plain encoding (currently used for all)
-- Pros: Simple, reliable, compatible
-- Cons: Larger file sizes
+// 规律时间戳 → TS_2DIFF（固定间隔）
+new MeasurementSchema("timestamp", TsDataType.Int64,
+    encoding: TsEncoding.Ts2Diff, compression: CompressionType.Lz4)
 
-// Recommended: Use compression to reduce file size
-new MeasurementSchema("temp", TsDataType.Float,
-    encoding: TsEncoding.Plain,  // Currently all use Plain
-    compression: CompressionType.Lz4)  // Compress for size reduction
+// 状态码 → Dictionary（低基数文本）
+new MeasurementSchema("status", TsDataType.Text,
+    encoding: TsEncoding.Dictionary, compression: CompressionType.Zstd)
+
+// 布尔标志 → RLE（大量重复值）
+new MeasurementSchema("flag", TsDataType.Boolean,
+    encoding: TsEncoding.Rle, compression: CompressionType.Lz4)
+
+// 小整数 → ZigZag（绝对值较小）
+new MeasurementSchema("count", TsDataType.Int32,
+    encoding: TsEncoding.ZigZag, compression: CompressionType.Lz4)
 ```
 
 ## 9. Compression
@@ -514,8 +529,8 @@ new MeasurementSchema("temp", TsDataType.Float,
 | **Lz4** | Very Fast | 2-3x | Real-time systems |
 | **Zstd** | Fast | 3-7x | General purpose (recommended) |
 | **Gzip** | Medium | 3-5x | Standard compatibility |
-| **Snappy** | Very Fast | 2-3x | Requires native libraries |
-| **Lzma2** | Slow | 5-10x | Archival storage |
+| **Snappy** | Very Fast | 2-3x | IronSnappy（纯 C#，跨平台） |
+| **Lzma2** | Slow | 5-10x | 仅支持解压缩（读取 Java 文件） |
 
 ### 9.2 Choosing Compression
 
@@ -1076,6 +1091,6 @@ namespace TsFileExample
 
 ---
 
-**Version:** 1.1.0
-**Last Updated:** 2026-02-05
+**Version:** 1.2.0
+**Last Updated:** 2026-02-12
 **License:** Apache License 2.0
