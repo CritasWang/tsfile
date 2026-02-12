@@ -104,7 +104,11 @@ public class TsFileWriter : IDisposable
     /// </summary>
     public void RegisterDevice(string deviceName, List<MeasurementSchema> measurements)
     {
-        var schema = new TableSchema(deviceName);
+        // Parse device name to get the table name for consistent V4 metadata
+        var deviceId = new StringArrayDeviceID(deviceName);
+        var tableName = deviceId.GetTableName();
+
+        var schema = new TableSchema(tableName);
         foreach (var measurement in measurements)
         {
             schema.AddMeasurement(measurement);
@@ -130,8 +134,12 @@ public class TsFileWriter : IDisposable
         if (tablet == null)
             throw new ArgumentNullException(nameof(tablet));
 
-        if (!_schemas.TryGetValue(tablet.DeviceName, out var schema))
-            throw new ArgumentException($"Schema for device {tablet.DeviceName} not registered");
+        // Parse device name to get table name for schema lookup
+        var deviceId = new StringArrayDeviceID(tablet.DeviceName);
+        var tableName = deviceId.GetTableName();
+
+        if (!_schemas.TryGetValue(tableName, out var schema))
+            throw new ArgumentException($"Schema for device {tablet.DeviceName} (table: {tableName}) not registered");
 
         if (tablet.RowCount == 0)
             return;
@@ -144,12 +152,12 @@ public class TsFileWriter : IDisposable
         else
         {
             // V3 writes to buffer first
-            var buffer = _deviceChunkBuffers[tablet.DeviceName];
+            var buffer = _deviceChunkBuffers[tableName];
             WriteChunkDataV3(buffer, tablet, schema);
 
             if (buffer.Length >= TsFileConstants.DefaultChunkSize)
             {
-                FlushDeviceBuffer(tablet.DeviceName);
+                FlushDeviceBuffer(tableName);
             }
         }
     }
@@ -164,9 +172,13 @@ public class TsFileWriter : IDisposable
     /// </summary>
     public void WriteRow(string deviceName, long timestamp, params object[] values)
     {
-        if (!_schemas.TryGetValue(deviceName, out var schema))
-            throw new ArgumentException($"Schema for device {deviceName} not registered");
-        
+        // Parse device name to get table name for schema lookup
+        var deviceId = new StringArrayDeviceID(deviceName);
+        var tableName = deviceId.GetTableName();
+
+        if (!_schemas.TryGetValue(tableName, out var schema))
+            throw new ArgumentException($"Schema for device {deviceName} (table: {tableName}) not registered");
+
         var tablet = new Tablet(deviceName, schema.Measurements, 1);
         tablet.AddRow(timestamp, values);
         Write(tablet);
