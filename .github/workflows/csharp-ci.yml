@@ -496,7 +496,12 @@ jobs:
         with:
           pattern: test-results-*
           merge-multiple: true
-      
+
+      - name: Remove BOM from TRX files
+        if: always()
+        run: |
+          find . -name "*.trx" -type f -exec sed -i '1s/^\xEF\xBB\xBF//' {} \;
+
       - name: Publish test summary
         uses: dorny/test-reporter@v1
         if: always()
