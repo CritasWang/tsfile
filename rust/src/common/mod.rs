@@ -24,6 +24,7 @@ mod encoding;
 mod compression;
 mod schema;
 mod time_range;
+pub mod tsfile_constants;
 
 pub use data_type::TSDataType;
 pub use encoding::TSEncoding;

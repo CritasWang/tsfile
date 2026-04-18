@@ -140,12 +140,90 @@ impl Tablet {
     /// Add a timestamp
     pub fn add_timestamp(&mut self, _row: usize, timestamp: Timestamp) {
         self.timestamps.push(timestamp);
+        self.row_count = self.timestamps.len();
     }
 
     /// Add a value to a column by name
     pub fn add_value<V: Into<TabletValue>>(&mut self, _row: usize, column: &str, value: V) -> Result<()> {
-        let _tablet_value = value.into();
-        // TODO: Implement value addition
+        let tablet_value = value.into();
+
+        let col_values = self.values.get_mut(column)
+            .ok_or_else(|| TsFileError::ColumnNotFound(column.to_string()))?;
+
+        match tablet_value {
+            TabletValue::Boolean(v) => {
+                if let ColumnValue::Boolean(vals) = col_values {
+                    vals.push(Some(v));
+                } else {
+                    return Err(TsFileError::TypeMismatch {
+                        expected: "Boolean".to_string(),
+                        actual: "different type".to_string(),
+                    });
+                }
+            }
+            TabletValue::Int32(v) => {
+                if let ColumnValue::Int32(vals) = col_values {
+                    vals.push(Some(v));
+                } else {
+                    return Err(TsFileError::TypeMismatch {
+                        expected: "Int32".to_string(),
+                        actual: "different type".to_string(),
+                    });
+                }
+            }
+            TabletValue::Int64(v) => {
+                if let ColumnValue::Int64(vals) = col_values {
+                    vals.push(Some(v));
+                } else {
+                    return Err(TsFileError::TypeMismatch {
+                        expected: "Int64".to_string(),
+                        actual: "different type".to_string(),
+                    });
+                }
+            }
+            TabletValue::Float(v) => {
+                if let ColumnValue::Float(vals) = col_values {
+                    vals.push(Some(v));
+                } else {
+                    return Err(TsFileError::TypeMismatch {
+                        expected: "Float".to_string(),
+                        actual: "different type".to_string(),
+                    });
+                }
+            }
+            TabletValue::Double(v) => {
+                if let ColumnValue::Double(vals) = col_values {
+                    vals.push(Some(v));
+                } else {
+                    return Err(TsFileError::TypeMismatch {
+                        expected: "Double".to_string(),
+                        actual: "different type".to_string(),
+                    });
+                }
+            }
+            TabletValue::String(v) => {
+                if let ColumnValue::String(vals) = col_values {
+                    vals.push(Some(v));
+                } else {
+                    return Err(TsFileError::TypeMismatch {
+                        expected: "String".to_string(),
+                        actual: "different type".to_string(),
+                    });
+                }
+            }
+            TabletValue::Null => {
+                // Push null value
+                match col_values {
+                    ColumnValue::Boolean(vals) => vals.push(None),
+                    ColumnValue::Int32(vals) => vals.push(None),
+                    ColumnValue::Int64(vals) => vals.push(None),
+                    ColumnValue::Float(vals) => vals.push(None),
+                    ColumnValue::Double(vals) => vals.push(None),
+                    ColumnValue::String(vals) => vals.push(None),
+                }
+            }
+        }
+
         Ok(())
     }
 
