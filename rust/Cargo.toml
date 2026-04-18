@@ -1,0 +1,49 @@
+[package]
+name = "tsfile"
+version = "2.2.1-SNAPSHOT"
+edition = "2021"
+authors = ["Apache TsFile Contributors"]
+license = "Apache-2.0"
+description = "Apache TsFile Rust implementation - a columnar storage file format for time series data"
+repository = "https://github.com/apache/tsfile"
+readme = "README.md"
+keywords = ["tsfile", "timeseries", "columnar", "storage"]
+categories = ["database", "encoding", "compression"]
+
+[dependencies]
+# Core dependencies
+byteorder = "1.5"
+bytes = "1.5"
+thiserror = "1.0"
+
+# Compression libraries (optional features)
+snap = { version = "1.1", optional = true }
+flate2 = { version = "1.0", optional = true }
+lz4 = { version = "1.24", optional = true }
+
+# Utilities
+chrono = "0.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.8"
+rand = "0.8"
+
+[features]
+default = ["snappy", "gzip", "lz4"]
+snappy = ["snap"]
+gzip = ["flate2"]
+lz4 = ["dep:lz4"]
+full = ["snappy", "gzip", "lz4"]
+
+[[bench]]
+name = "write_benchmark"
+harness = false
+
+[[bench]]
+name = "read_benchmark"
+harness = false
+
+[[bench]]
+name = "encoding_benchmark"
+harness = false
