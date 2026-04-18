@@ -47,3 +47,7 @@ harness = false
 [[bench]]
 name = "encoding_benchmark"
 harness = false
+
+[[bench]]
+name = "tsfile_bench"
+harness = false

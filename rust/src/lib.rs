@@ -68,17 +68,22 @@
 //!
 //! ```rust,no_run
 //! use tsfile::reader::TsFileReader;
+//! use tsfile::common::TimeRange;
 //!
 //! // Open reader
 //! let mut reader = TsFileReader::open("test.tsfile")?;
 //!
-//! // Query data
-//! let mut result_set = reader.query("table1", vec!["s1"], 0, 100, None)?;
+//! // Read all data
+//! let mut result_set = reader.read_all()?;
+//!
+//! // Or read with time range filter
+//! // let time_range = TimeRange::new(0, 100);
+//! // let mut result_set = reader.read_with_filter(Some(time_range))?;
 //!
 //! // Iterate results
 //! while result_set.next()? {
 //!     let timestamp = result_set.get_timestamp();
-//!     let value: i64 = result_set.get_value(1)?;
+//!     let value = result_set.get_string_value(0)?;
 //!     println!("timestamp: {}, value: {}", timestamp, value);
 //! }
 //!

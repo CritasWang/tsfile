@@ -114,6 +114,20 @@ impl ReadFile {
     }
 }
 
+// Implement Read trait to allow using ReadFile with varint functions
+impl Read for ReadFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+// Implement Seek trait for compatibility
+impl Seek for ReadFile {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.reader.seek(pos)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
