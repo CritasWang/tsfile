@@ -29,6 +29,7 @@ use crate::compress::compress;
 use crate::encoding::PlainEncoder;
 use crate::error::{Result, TsFileError};
 use crate::file::WriteFile;
+use crate::metadata::TsFileMetadata;
 use crate::utils::{write_var_string, write_var_uint};
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::path::Path;
@@ -214,19 +215,26 @@ impl TsFileWriter {
         Ok(())
     }
 
-    /// Write minimal index section (simplified)
+    /// Write metadata section (compatible with Java/C++ format)
     fn write_minimal_index(&mut self) -> Result<()> {
         self.metadata_offset = self.file.position();
 
         // Write separator marker
         self.file.write(&[SEPARATOR_MARKER])?;
 
-        // Write minimal metadata (empty for now)
-        // In a full implementation, this would include:
-        // - Operation index range
-        // - Metadata index tree
-        // - Timeseries metadata
-        // - Table schemas
+        // Create TsFile metadata structure
+        let metadata = TsFileMetadata::with_table(
+            self.schema.table_name.clone(),
+            self.schema.clone(),
+            self.metadata_offset as i64,
+        );
+
+        // Serialize metadata to a buffer first to ensure proper format
+        let mut metadata_buffer = Vec::new();
+        metadata.serialize_to(&mut metadata_buffer)?;
+
+        // Write the metadata buffer to file
+        self.file.write(&metadata_buffer)?;
 
         Ok(())
     }

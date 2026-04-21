@@ -96,6 +96,7 @@ pub mod compress;
 pub mod encoding;
 pub mod error;
 pub mod file;
+pub mod metadata;
 pub mod reader;
 pub mod utils;
 pub mod writer;
