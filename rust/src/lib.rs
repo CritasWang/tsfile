@@ -103,7 +103,7 @@ pub mod writer;
 
 // Re-export commonly used types
 pub use common::{
-    ColumnCategory, ColumnSchema, CompressionType, TableSchema, TSDataType, TSEncoding,
+    ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema,
 };
 pub use error::{Result, TsFileError};
 pub use reader::TsFileReader;

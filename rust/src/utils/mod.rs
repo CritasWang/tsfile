@@ -21,7 +21,9 @@
 
 pub mod varint;
 
-pub use varint::{read_var_int, read_var_string, read_var_uint, write_var_int, write_var_string, write_var_uint};
+pub use varint::{
+    read_var_int, read_var_string, read_var_uint, write_var_int, write_var_string, write_var_uint,
+};
 
 /// Convert boolean to string
 pub fn bool_to_string(value: bool) -> String {

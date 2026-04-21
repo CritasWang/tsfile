@@ -19,7 +19,9 @@
 
 //! Example demonstrating TsFile write operations
 
-use tsfile::common::{ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema};
+use tsfile::common::{
+    ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema,
+};
 use tsfile::writer::{Tablet, TsFileWriter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,7 +66,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Table: {}", schema.table_name);
     println!("  Columns: {}", schema.column_count());
     for col in &schema.columns {
-        println!("    - {} ({}, {})", col.column_name, col.data_type, col.category);
+        println!(
+            "    - {} ({}, {})",
+            col.column_name, col.data_type, col.category
+        );
     }
     println!();
 
@@ -76,8 +81,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tablet = Tablet::with_schema(
         "sensor_table",
         vec!["device_id", "temperature", "humidity", "pressure"],
-        vec![TSDataType::String, TSDataType::Float, TSDataType::Float, TSDataType::Int64],
-        vec![ColumnCategory::Tag, ColumnCategory::Field, ColumnCategory::Field, ColumnCategory::Field],
+        vec![
+            TSDataType::String,
+            TSDataType::Float,
+            TSDataType::Float,
+            TSDataType::Int64,
+        ],
+        vec![
+            ColumnCategory::Tag,
+            ColumnCategory::Field,
+            ColumnCategory::Field,
+            ColumnCategory::Field,
+        ],
         100,
     );
 
@@ -94,8 +109,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tablet.add_value(i as usize, "humidity", 50.0 + (i as f32) * 0.2)?;
         tablet.add_value(i as usize, "pressure", 1013 + i)?;
 
-        println!("  Row {}: timestamp={}, temp={:.1}°C, humidity={:.1}%, pressure={} hPa",
-            i, timestamp, 20.0 + (i as f32) * 0.5, 50.0 + (i as f32) * 0.2, 1013 + i);
+        println!(
+            "  Row {}: timestamp={}, temp={:.1}°C, humidity={:.1}%, pressure={} hPa",
+            i,
+            timestamp,
+            20.0 + (i as f32) * 0.5,
+            50.0 + (i as f32) * 0.2,
+            1013 + i
+        );
     }
     println!();
 
@@ -124,18 +145,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Verify file format
     let contents = fs::read("demo_output.tsfile")?;
     println!("=== File Format Verification ===");
-    println!("  Magic header: {}", if &contents[0..6] == b"TsFile" { "✓ Valid" } else { "✗ Invalid" });
+    println!(
+        "  Magic header: {}",
+        if &contents[0..6] == b"TsFile" {
+            "✓ Valid"
+        } else {
+            "✗ Invalid"
+        }
+    );
     println!("  Version: 0x{:02x}", contents[6]);
 
     let footer_start = contents.len() - 10;
-    println!("  Magic footer: {}", if &contents[footer_start..footer_start+6] == b"TsFile" { "✓ Valid" } else { "✗ Invalid" });
+    println!(
+        "  Magic footer: {}",
+        if &contents[footer_start..footer_start + 6] == b"TsFile" {
+            "✓ Valid"
+        } else {
+            "✗ Invalid"
+        }
+    );
 
     // Read metadata size from footer
     let metadata_size = i32::from_le_bytes([
-        contents[contents.len()-4],
-        contents[contents.len()-3],
-        contents[contents.len()-2],
-        contents[contents.len()-1],
+        contents[contents.len() - 4],
+        contents[contents.len() - 3],
+        contents[contents.len() - 2],
+        contents[contents.len() - 1],
     ]);
     println!("  Metadata size: {} bytes", metadata_size);
     println!();

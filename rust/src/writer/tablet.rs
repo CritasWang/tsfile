@@ -19,7 +19,7 @@
 
 //! Tablet data structure for batch operations
 
-use crate::common::{TSDataType, Timestamp, ColumnCategory};
+use crate::common::{ColumnCategory, TSDataType, Timestamp};
 use crate::error::{Result, TsFileError};
 use std::collections::HashMap;
 
@@ -39,8 +39,12 @@ impl ColumnValue {
     pub fn new(data_type: TSDataType, capacity: usize) -> Self {
         match data_type {
             TSDataType::Boolean => ColumnValue::Boolean(Vec::with_capacity(capacity)),
-            TSDataType::Int32 | TSDataType::Date => ColumnValue::Int32(Vec::with_capacity(capacity)),
-            TSDataType::Int64 | TSDataType::Timestamp => ColumnValue::Int64(Vec::with_capacity(capacity)),
+            TSDataType::Int32 | TSDataType::Date => {
+                ColumnValue::Int32(Vec::with_capacity(capacity))
+            }
+            TSDataType::Int64 | TSDataType::Timestamp => {
+                ColumnValue::Int64(Vec::with_capacity(capacity))
+            }
             TSDataType::Float => ColumnValue::Float(Vec::with_capacity(capacity)),
             TSDataType::Double => ColumnValue::Double(Vec::with_capacity(capacity)),
             TSDataType::String | TSDataType::Text | TSDataType::Blob => {
@@ -144,10 +148,17 @@ impl Tablet {
     }
 
     /// Add a value to a column by name
-    pub fn add_value<V: Into<TabletValue>>(&mut self, _row: usize, column: &str, value: V) -> Result<()> {
+    pub fn add_value<V: Into<TabletValue>>(
+        &mut self,
+        _row: usize,
+        column: &str,
+        value: V,
+    ) -> Result<()> {
         let tablet_value = value.into();
 
-        let col_values = self.values.get_mut(column)
+        let col_values = self
+            .values
+            .get_mut(column)
             .ok_or_else(|| TsFileError::ColumnNotFound(column.to_string()))?;
 
         match tablet_value {

@@ -19,9 +19,11 @@
 
 //! Benchmarks for TsFile library
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use tempfile::NamedTempFile;
-use tsfile::common::{ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema};
+use tsfile::common::{
+    ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema,
+};
 use tsfile::reader::TsFileReader;
 use tsfile::writer::{Tablet, TsFileWriter};
 
@@ -54,8 +56,12 @@ fn benchmark_write(c: &mut Criterion) {
 
                 for i in 0..size {
                     tablet.add_timestamp(i, i as i64);
-                    tablet.add_value(i, "temperature", 20.0 + (i as f32 * 0.1)).unwrap();
-                    tablet.add_value(i, "humidity", 50.0 + (i as f32 * 0.2)).unwrap();
+                    tablet
+                        .add_value(i, "temperature", 20.0 + (i as f32 * 0.1))
+                        .unwrap();
+                    tablet
+                        .add_value(i, "humidity", 50.0 + (i as f32 * 0.2))
+                        .unwrap();
                 }
 
                 writer.write_tablet(&tablet).unwrap();
@@ -80,9 +86,7 @@ fn benchmark_read(c: &mut Criterion) {
         {
             let schema = TableSchema::new(
                 "bench_table",
-                vec![
-                    ColumnSchema::field("temperature", TSDataType::Float),
-                ],
+                vec![ColumnSchema::field("temperature", TSDataType::Float)],
             );
 
             let mut writer = TsFileWriter::new(&path, schema).unwrap();
@@ -97,7 +101,9 @@ fn benchmark_read(c: &mut Criterion) {
 
             for i in 0..*size {
                 tablet.add_timestamp(i, i as i64);
-                tablet.add_value(i, "temperature", 20.0 + (i as f32 * 0.1)).unwrap();
+                tablet
+                    .add_value(i, "temperature", 20.0 + (i as f32 * 0.1))
+                    .unwrap();
             }
 
             writer.write_tablet(&tablet).unwrap();
@@ -129,45 +135,49 @@ fn benchmark_compression(c: &mut Criterion) {
     let size = 1000;
 
     for compression in &[CompressionType::Uncompressed, CompressionType::Snappy] {
-        group.bench_with_input(BenchmarkId::from_parameter(format!("{:?}", compression)), compression, |b, compression| {
-            b.iter(|| {
-                let temp_file = NamedTempFile::new().unwrap();
-                let path = temp_file.path();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{:?}", compression)),
+            compression,
+            |b, compression| {
+                b.iter(|| {
+                    let temp_file = NamedTempFile::new().unwrap();
+                    let path = temp_file.path();
 
-                let schema = TableSchema::new(
-                    "bench_table",
-                    vec![
-                        ColumnSchema::new(
+                    let schema = TableSchema::new(
+                        "bench_table",
+                        vec![ColumnSchema::new(
                             "temperature",
                             TSDataType::Float,
                             *compression,
                             TSEncoding::Plain,
                             ColumnCategory::Field,
-                        ),
-                    ],
-                );
+                        )],
+                    );
 
-                let mut writer = TsFileWriter::new(path, schema).unwrap();
+                    let mut writer = TsFileWriter::new(path, schema).unwrap();
 
-                let mut tablet = Tablet::with_schema(
-                    "bench_table",
-                    vec!["temperature"],
-                    vec![TSDataType::Float],
-                    vec![ColumnCategory::Field],
-                    size,
-                );
+                    let mut tablet = Tablet::with_schema(
+                        "bench_table",
+                        vec!["temperature"],
+                        vec![TSDataType::Float],
+                        vec![ColumnCategory::Field],
+                        size,
+                    );
 
-                for i in 0..size {
-                    tablet.add_timestamp(i, i as i64);
-                    tablet.add_value(i, "temperature", 20.0 + (i as f32 * 0.1)).unwrap();
-                }
+                    for i in 0..size {
+                        tablet.add_timestamp(i, i as i64);
+                        tablet
+                            .add_value(i, "temperature", 20.0 + (i as f32 * 0.1))
+                            .unwrap();
+                    }
 
-                writer.write_tablet(&tablet).unwrap();
-                writer.close().unwrap();
+                    writer.write_tablet(&tablet).unwrap();
+                    writer.close().unwrap();
 
-                black_box(path);
-            });
-        });
+                    black_box(path);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -186,50 +196,60 @@ fn benchmark_data_types(c: &mut Criterion) {
     ];
 
     for (name, data_type) in data_types {
-        group.bench_with_input(BenchmarkId::from_parameter(name), &data_type, |b, &data_type| {
-            b.iter(|| {
-                let temp_file = NamedTempFile::new().unwrap();
-                let path = temp_file.path();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(name),
+            &data_type,
+            |b, &data_type| {
+                b.iter(|| {
+                    let temp_file = NamedTempFile::new().unwrap();
+                    let path = temp_file.path();
 
-                let schema = TableSchema::new(
-                    "bench_table",
-                    vec![
-                        ColumnSchema::field("value", data_type),
-                    ],
-                );
+                    let schema = TableSchema::new(
+                        "bench_table",
+                        vec![ColumnSchema::field("value", data_type)],
+                    );
 
-                let mut writer = TsFileWriter::new(path, schema).unwrap();
+                    let mut writer = TsFileWriter::new(path, schema).unwrap();
 
-                let mut tablet = Tablet::with_schema(
-                    "bench_table",
-                    vec!["value"],
-                    vec![data_type],
-                    vec![ColumnCategory::Field],
-                    size,
-                );
+                    let mut tablet = Tablet::with_schema(
+                        "bench_table",
+                        vec!["value"],
+                        vec![data_type],
+                        vec![ColumnCategory::Field],
+                        size,
+                    );
 
-                for i in 0..size {
-                    tablet.add_timestamp(i, i as i64);
-                    match data_type {
-                        TSDataType::Int32 => tablet.add_value(i, "value", i as i32).unwrap(),
-                        TSDataType::Int64 => tablet.add_value(i, "value", i as i64).unwrap(),
-                        TSDataType::Float => tablet.add_value(i, "value", i as f32).unwrap(),
-                        TSDataType::Double => tablet.add_value(i, "value", i as f64).unwrap(),
-                        TSDataType::Boolean => tablet.add_value(i, "value", i % 2 == 0).unwrap(),
-                        _ => {}
+                    for i in 0..size {
+                        tablet.add_timestamp(i, i as i64);
+                        match data_type {
+                            TSDataType::Int32 => tablet.add_value(i, "value", i as i32).unwrap(),
+                            TSDataType::Int64 => tablet.add_value(i, "value", i as i64).unwrap(),
+                            TSDataType::Float => tablet.add_value(i, "value", i as f32).unwrap(),
+                            TSDataType::Double => tablet.add_value(i, "value", i as f64).unwrap(),
+                            TSDataType::Boolean => {
+                                tablet.add_value(i, "value", i % 2 == 0).unwrap()
+                            }
+                            _ => {}
+                        }
                     }
-                }
 
-                writer.write_tablet(&tablet).unwrap();
-                writer.close().unwrap();
+                    writer.write_tablet(&tablet).unwrap();
+                    writer.close().unwrap();
 
-                black_box(path);
-            });
-        });
+                    black_box(path);
+                });
+            },
+        );
     }
 
     group.finish();
 }
 
-criterion_group!(benches, benchmark_write, benchmark_read, benchmark_compression, benchmark_data_types);
+criterion_group!(
+    benches,
+    benchmark_write,
+    benchmark_read,
+    benchmark_compression,
+    benchmark_data_types
+);
 criterion_main!(benches);

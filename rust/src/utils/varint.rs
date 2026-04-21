@@ -104,9 +104,8 @@ pub fn read_var_string<R: Read>(reader: &mut R) -> Result<String> {
     let len = read_var_uint(reader)? as usize;
     let mut bytes = vec![0u8; len];
     reader.read_exact(&mut bytes)?;
-    Ok(String::from_utf8(bytes).map_err(|e| {
-        crate::error::TsFileError::Decoding(format!("Invalid UTF-8: {}", e))
-    })?)
+    String::from_utf8(bytes)
+        .map_err(|e| crate::error::TsFileError::Decoding(format!("Invalid UTF-8: {}", e)))
 }
 
 #[cfg(test)]
@@ -130,7 +129,19 @@ mod tests {
 
     #[test]
     fn test_var_int() {
-        let test_cases = vec![0i64, 1, -1, 127, -127, 128, -128, 1000, -1000, i64::MAX, i64::MIN];
+        let test_cases = vec![
+            0i64,
+            1,
+            -1,
+            127,
+            -127,
+            128,
+            -128,
+            1000,
+            -1000,
+            i64::MAX,
+            i64::MIN,
+        ];
 
         for &value in &test_cases {
             let mut buf = Vec::new();

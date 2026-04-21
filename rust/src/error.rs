@@ -149,10 +149,7 @@ mod tests {
             expected: "INT64".to_string(),
             actual: "STRING".to_string(),
         };
-        assert_eq!(
-            err.to_string(),
-            "Type mismatch: expected INT64, got STRING"
-        );
+        assert_eq!(err.to_string(), "Type mismatch: expected INT64, got STRING");
     }
 
     #[test]

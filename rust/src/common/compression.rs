@@ -90,12 +90,15 @@ impl CompressionType {
         match self {
             CompressionType::Uncompressed => true,
             #[cfg(feature = "snappy")]
-            CompressionType::Snappy => return true,
+            CompressionType::Snappy => true,
             #[cfg(feature = "gzip")]
-            CompressionType::Gzip => return true,
+            CompressionType::Gzip => true,
             #[cfg(feature = "lz4")]
-            CompressionType::LZ4 => return true,
-            CompressionType::LZO | CompressionType::SDT | CompressionType::PAA | CompressionType::PLA => false,
+            CompressionType::LZ4 => true,
+            CompressionType::LZO
+            | CompressionType::SDT
+            | CompressionType::PAA
+            | CompressionType::PLA => false,
             _ => false,
         }
     }

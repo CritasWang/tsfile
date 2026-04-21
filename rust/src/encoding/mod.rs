@@ -19,17 +19,16 @@
 
 //! Encoding implementations
 
+pub mod gorilla;
 pub mod plain;
 pub mod rle;
 pub mod ts_2diff;
-pub mod gorilla;
 // Future encoding implementations:
 // pub mod dictionary;
 // pub mod zigzag;
 // pub mod diff;
 
+pub use gorilla::GorillaEncoder;
 pub use plain::PlainEncoder;
 pub use rle::RleEncoder;
 pub use ts_2diff::Ts2DiffEncoder;
-pub use gorilla::GorillaEncoder;
-

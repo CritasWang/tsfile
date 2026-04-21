@@ -20,8 +20,8 @@
 //! Plain encoding (no encoding, raw binary)
 
 use crate::error::Result;
-use byteorder::{LittleEndian, WriteBytesExt, ReadBytesExt};
-use std::io::{Write, Read};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io::{Read, Write};
 
 /// Plain encoder - writes data in raw binary format
 pub struct PlainEncoder;
@@ -95,9 +95,8 @@ impl PlainEncoder {
         let len = reader.read_i32::<LittleEndian>()? as usize;
         let mut bytes = vec![0u8; len];
         reader.read_exact(&mut bytes)?;
-        Ok(String::from_utf8(bytes).map_err(|e| {
-            crate::error::TsFileError::Decoding(format!("Invalid UTF-8: {}", e))
-        })?)
+        String::from_utf8(bytes)
+            .map_err(|e| crate::error::TsFileError::Decoding(format!("Invalid UTF-8: {}", e)))
     }
 }
 
@@ -113,8 +112,8 @@ mod tests {
         PlainEncoder::encode_bool(&mut buf, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
-        assert_eq!(PlainEncoder::decode_bool(&mut cursor).unwrap(), true);
-        assert_eq!(PlainEncoder::decode_bool(&mut cursor).unwrap(), false);
+        assert!(PlainEncoder::decode_bool(&mut cursor).unwrap());
+        assert!(!PlainEncoder::decode_bool(&mut cursor).unwrap());
     }
 
     #[test]
@@ -122,14 +121,18 @@ mod tests {
         let mut buf = Vec::new();
         PlainEncoder::encode_i32(&mut buf, 42).unwrap();
         PlainEncoder::encode_i64(&mut buf, 1234567890).unwrap();
-        PlainEncoder::encode_f32(&mut buf, 3.14).unwrap();
-        PlainEncoder::encode_f64(&mut buf, 2.718281828).unwrap();
+        PlainEncoder::encode_f32(&mut buf, std::f32::consts::PI).unwrap();
+        PlainEncoder::encode_f64(&mut buf, std::f64::consts::E).unwrap();
 
         let mut cursor = Cursor::new(buf);
         assert_eq!(PlainEncoder::decode_i32(&mut cursor).unwrap(), 42);
         assert_eq!(PlainEncoder::decode_i64(&mut cursor).unwrap(), 1234567890);
-        assert!((PlainEncoder::decode_f32(&mut cursor).unwrap() - 3.14).abs() < 0.001);
-        assert!((PlainEncoder::decode_f64(&mut cursor).unwrap() - 2.718281828).abs() < 0.000001);
+        assert!(
+            (PlainEncoder::decode_f32(&mut cursor).unwrap() - std::f32::consts::PI).abs() < 0.001
+        );
+        assert!(
+            (PlainEncoder::decode_f64(&mut cursor).unwrap() - std::f64::consts::E).abs() < 0.000001
+        );
     }
 
     #[test]
@@ -138,6 +141,9 @@ mod tests {
         PlainEncoder::encode_string(&mut buf, "Hello, TsFile!").unwrap();
 
         let mut cursor = Cursor::new(buf);
-        assert_eq!(PlainEncoder::decode_string(&mut cursor).unwrap(), "Hello, TsFile!");
+        assert_eq!(
+            PlainEncoder::decode_string(&mut cursor).unwrap(),
+            "Hello, TsFile!"
+        );
     }
 }

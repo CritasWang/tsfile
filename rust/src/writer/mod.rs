@@ -77,8 +77,9 @@ impl TsFileWriter {
 
         // Write each column as a chunk
         for (i, col_name) in tablet.column_names.iter().enumerate() {
-            let col_schema = self.schema.find_column(col_name)
-                .ok_or_else(|| TsFileError::schema(format!("Column {} not found in schema", col_name)))?;
+            let col_schema = self.schema.find_column(col_name).ok_or_else(|| {
+                TsFileError::schema(format!("Column {} not found in schema", col_name))
+            })?;
 
             self.write_chunk(
                 col_name,
@@ -141,7 +142,7 @@ impl TsFileWriter {
         &self,
         tablet: &Tablet,
         col_index: usize,
-        data_type: TSDataType,
+        _data_type: TSDataType,
         _encoding: TSEncoding,
     ) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
@@ -266,7 +267,7 @@ impl Drop for TsFileWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{ColumnCategory, ColumnSchema, TSEncoding};
+    use crate::common::ColumnSchema;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -288,9 +289,7 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let schema = TableSchema::new(
             "test_table",
-            vec![
-                ColumnSchema::field("temperature", TSDataType::Float),
-            ],
+            vec![ColumnSchema::field("temperature", TSDataType::Float)],
         );
 
         let mut writer = TsFileWriter::new(temp_file.path(), schema).unwrap();
@@ -301,6 +300,9 @@ mod tests {
         let contents = fs::read(temp_file.path()).unwrap();
         assert!(contents.len() >= 17); // At least header + footer
         assert_eq!(&contents[0..6], b"TsFile");
-        assert_eq!(&contents[contents.len()-10..contents.len()-4], b"TsFile");
+        assert_eq!(
+            &contents[contents.len() - 10..contents.len() - 4],
+            b"TsFile"
+        );
     }
 }

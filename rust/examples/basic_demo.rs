@@ -19,8 +19,8 @@
 
 //! Basic example showing TsFile encoding and compression capabilities
 
-use tsfile::compress::{compress, decompress};
 use tsfile::common::CompressionType;
+use tsfile::compress::{compress, decompress};
 use tsfile::encoding::{GorillaEncoder, PlainEncoder, RleEncoder, Ts2DiffEncoder};
 
 fn main() {
@@ -51,8 +51,8 @@ fn demo_plain_encoding() {
     PlainEncoder::encode_bool(&mut buf, true).unwrap();
     PlainEncoder::encode_i32(&mut buf, 42).unwrap();
     PlainEncoder::encode_i64(&mut buf, 1234567890).unwrap();
-    PlainEncoder::encode_f32(&mut buf, 3.14).unwrap();
-    PlainEncoder::encode_f64(&mut buf, 2.718281828).unwrap();
+    PlainEncoder::encode_f32(&mut buf, std::f32::consts::PI).unwrap();
+    PlainEncoder::encode_f64(&mut buf, std::f64::consts::E).unwrap();
     PlainEncoder::encode_string(&mut buf, "Hello, TsFile!").unwrap();
 
     println!("Encoded {} bytes of mixed data types", buf.len());
@@ -150,7 +150,10 @@ fn demo_compression() {
         CompressionType::LZ4,
     ] {
         if !compression.is_supported() {
-            println!("{}: Not supported (feature not enabled)", compression.name());
+            println!(
+                "{}: Not supported (feature not enabled)",
+                compression.name()
+            );
             continue;
         }
 

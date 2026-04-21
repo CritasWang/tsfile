@@ -19,17 +19,17 @@
 
 //! Common data types and structures for TsFile
 
+mod compression;
 mod data_type;
 mod encoding;
-mod compression;
 mod schema;
 mod time_range;
 pub mod tsfile_constants;
 
+pub use compression::CompressionType;
 pub use data_type::TSDataType;
 pub use encoding::TSEncoding;
-pub use compression::CompressionType;
-pub use schema::{ColumnCategory, ColumnSchema, TableSchema, MeasurementSchema};
+pub use schema::{ColumnCategory, ColumnSchema, MeasurementSchema, TableSchema};
 pub use time_range::TimeRange;
 
 /// Timestamp type (64-bit signed integer representing time in milliseconds)

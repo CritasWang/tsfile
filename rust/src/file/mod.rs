@@ -21,7 +21,7 @@
 
 use crate::error::Result;
 use std::fs::File;
-use std::io::{BufWriter, BufReader, Write, Read, Seek, SeekFrom};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 /// Write file handle for TsFile

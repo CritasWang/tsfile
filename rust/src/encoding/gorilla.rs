@@ -27,8 +27,8 @@
 //! by Pelkonen et al., Facebook, 2015
 
 use crate::error::Result;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Read, Write};
+use byteorder::{LittleEndian, WriteBytesExt};
+use std::io::Write;
 
 /// Gorilla encoder for f32 and f64 values
 pub struct GorillaEncoder;
@@ -223,7 +223,6 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     #[test]
     fn test_gorilla_f32_constant() {
@@ -233,7 +232,10 @@ mod tests {
 
         // Should compress well - mostly 0 bits
         // First value (4 bytes) + compressed data (should be very small)
-        println!("Compressed size: {} bytes for 100 constant values", buf.len());
+        println!(
+            "Compressed size: {} bytes for 100 constant values",
+            buf.len()
+        );
         assert!(buf.len() < 100 * 4); // Much smaller than uncompressed
     }
 
@@ -243,18 +245,24 @@ mod tests {
         let mut buf = Vec::new();
         GorillaEncoder::encode_f32_array(&mut buf, &values).unwrap();
 
-        println!("Compressed size: {} bytes for 100 slowly changing values", buf.len());
+        println!(
+            "Compressed size: {} bytes for 100 slowly changing values",
+            buf.len()
+        );
         // Should still compress reasonably well
         assert!(buf.len() < 100 * 4);
     }
 
     #[test]
     fn test_gorilla_f64_constant() {
-        let values = vec![3.14159265359f64; 50];
+        let values = vec![std::f64::consts::PI; 50];
         let mut buf = Vec::new();
         GorillaEncoder::encode_f64_array(&mut buf, &values).unwrap();
 
-        println!("Compressed size: {} bytes for 50 constant f64 values", buf.len());
+        println!(
+            "Compressed size: {} bytes for 50 constant f64 values",
+            buf.len()
+        );
         assert!(buf.len() < 50 * 8); // Much smaller than uncompressed
     }
 

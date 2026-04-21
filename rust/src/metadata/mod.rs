@@ -167,13 +167,22 @@ impl TsFileMetadata {
 
         // Create empty metadata index node for this table
         let index_node = MetadataIndexNode::new_leaf_device();
-        metadata.table_metadata_index_map.insert(table_name.clone(), index_node);
+        metadata
+            .table_metadata_index_map
+            .insert(table_name.clone(), index_node);
         metadata.table_schema_map.insert(table_name, schema);
 
         // Add default properties (unencrypted)
-        metadata.properties.insert("encryptLevel".to_string(), "0".to_string());
-        metadata.properties.insert("encryptType".to_string(), "org.apache.tsfile.encrypt.UNENCRYPTED".to_string());
-        metadata.properties.insert("encryptKey".to_string(), "".to_string());
+        metadata
+            .properties
+            .insert("encryptLevel".to_string(), "0".to_string());
+        metadata.properties.insert(
+            "encryptType".to_string(),
+            "org.apache.tsfile.encrypt.UNENCRYPTED".to_string(),
+        );
+        metadata
+            .properties
+            .insert("encryptKey".to_string(), "".to_string());
 
         metadata
     }
@@ -273,7 +282,7 @@ fn serialize_column_schema<W: Write>(writer: &mut W, column: &ColumnSchema) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{CompressionType, TSDataType, TSEncoding};
+    use crate::common::TSDataType;
 
     #[test]
     fn test_metadata_index_node_type() {
@@ -287,9 +296,7 @@ mod tests {
     fn test_metadata_serialization() {
         let schema = TableSchema::new(
             "test_table",
-            vec![
-                ColumnSchema::field("temperature", TSDataType::Float),
-            ],
+            vec![ColumnSchema::field("temperature", TSDataType::Float)],
         );
 
         let metadata = TsFileMetadata::with_table("test_table".to_string(), schema, 100);

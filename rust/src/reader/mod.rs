@@ -43,7 +43,7 @@ impl TsFileReader {
         // Verify file header
         let mut magic = vec![0u8; 6];
         file.read_exact(&mut magic)?;
-        if &magic != MAGIC_STRING_TSFILE {
+        if magic != MAGIC_STRING_TSFILE {
             return Err(TsFileError::format("Invalid TsFile magic header"));
         }
 
@@ -106,7 +106,7 @@ impl TsFileReader {
                         all_data.extend(
                             chunk_data
                                 .into_iter()
-                                .filter(|row| range.contains(row.timestamp))
+                                .filter(|row| range.contains(row.timestamp)),
                         );
                     } else {
                         all_data.extend(chunk_data);
@@ -180,7 +180,7 @@ impl TsFileReader {
 
         // Read values
         let mut rows = Vec::with_capacity(num_timestamps);
-        for i in 0..num_timestamps {
+        for &timestamp in timestamps.iter().take(num_timestamps) {
             let value_str = match data_type {
                 TSDataType::Boolean => {
                     let v = PlainEncoder::decode_bool(&mut cursor)?;
@@ -209,7 +209,7 @@ impl TsFileReader {
             };
 
             rows.push(Row {
-                timestamp: timestamps[i],
+                timestamp,
                 values: vec![Some(value_str)],
                 column_name: column_name.to_string(),
             });
@@ -246,6 +246,7 @@ impl ResultSet {
     }
 
     /// Move to the next row
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<bool> {
         if self.current < self.rows.len() {
             self.current += 1;
@@ -311,7 +312,7 @@ pub struct Row {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{ColumnCategory, ColumnSchema, CompressionType, TableSchema, TSEncoding};
+    use crate::common::{ColumnCategory, ColumnSchema, TableSchema};
     use crate::writer::{Tablet, TsFileWriter};
     use tempfile::NamedTempFile;
 
@@ -394,9 +395,7 @@ mod tests {
         {
             let schema = TableSchema::new(
                 "test_table",
-                vec![
-                    ColumnSchema::field("temperature", TSDataType::Float),
-                ],
+                vec![ColumnSchema::field("temperature", TSDataType::Float)],
             );
 
             let mut writer = TsFileWriter::new(path, schema).unwrap();

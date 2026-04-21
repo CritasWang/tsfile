@@ -30,9 +30,9 @@ pub fn compress(data: &[u8], compression: CompressionType) -> Result<Vec<u8>> {
         #[cfg(feature = "snappy")]
         CompressionType::Snappy => {
             let mut encoder = snap::raw::Encoder::new();
-            encoder.compress_vec(data).map_err(|e| {
-                TsFileError::Compression(format!("Snappy compression failed: {}", e))
-            })
+            encoder
+                .compress_vec(data)
+                .map_err(|e| TsFileError::Compression(format!("Snappy compression failed: {}", e)))
         }
 
         #[cfg(feature = "gzip")]
@@ -43,17 +43,14 @@ pub fn compress(data: &[u8], compression: CompressionType) -> Result<Vec<u8>> {
 
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(data)?;
-            encoder.finish().map_err(|e| {
-                TsFileError::Compression(format!("Gzip compression failed: {}", e))
-            })
+            encoder
+                .finish()
+                .map_err(|e| TsFileError::Compression(format!("Gzip compression failed: {}", e)))
         }
 
         #[cfg(feature = "lz4")]
-        CompressionType::LZ4 => {
-            lz4::block::compress(data, None, false).map_err(|e| {
-                TsFileError::Compression(format!("LZ4 compression failed: {}", e))
-            })
-        }
+        CompressionType::LZ4 => lz4::block::compress(data, None, false)
+            .map_err(|e| TsFileError::Compression(format!("LZ4 compression failed: {}", e))),
 
         _ => Err(TsFileError::FeatureNotEnabled(format!(
             "Compression type {} is not enabled or supported",
@@ -63,7 +60,11 @@ pub fn compress(data: &[u8], compression: CompressionType) -> Result<Vec<u8>> {
 }
 
 /// Decompress data using the specified compression type
-pub fn decompress(data: &[u8], compression: CompressionType, original_size: Option<usize>) -> Result<Vec<u8>> {
+pub fn decompress(
+    data: &[u8],
+    compression: CompressionType,
+    original_size: Option<usize>,
+) -> Result<Vec<u8>> {
     match compression {
         CompressionType::Uncompressed => Ok(data.to_vec()),
 
@@ -91,9 +92,8 @@ pub fn decompress(data: &[u8], compression: CompressionType, original_size: Opti
             let size = original_size.ok_or_else(|| {
                 TsFileError::Decompression("LZ4 decompression requires original size".to_string())
             })?;
-            lz4::block::decompress(data, Some(size as i32)).map_err(|e| {
-                TsFileError::Decompression(format!("LZ4 decompression failed: {}", e))
-            })
+            lz4::block::decompress(data, Some(size as i32))
+                .map_err(|e| TsFileError::Decompression(format!("LZ4 decompression failed: {}", e)))
         }
 
         _ => Err(TsFileError::FeatureNotEnabled(format!(
@@ -142,7 +142,8 @@ mod tests {
         let data = b"Hello, TsFile! This is a test of LZ4 compression.".repeat(10);
         let original_size = data.len();
         let compressed = compress(&data, CompressionType::LZ4).unwrap();
-        let decompressed = decompress(&compressed, CompressionType::LZ4, Some(original_size)).unwrap();
+        let decompressed =
+            decompress(&compressed, CompressionType::LZ4, Some(original_size)).unwrap();
         assert_eq!(decompressed, data);
     }
 }

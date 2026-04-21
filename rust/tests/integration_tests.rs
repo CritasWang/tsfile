@@ -20,7 +20,9 @@
 //! Integration tests for TsFile library
 
 use tempfile::NamedTempFile;
-use tsfile::common::{ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema, TimeRange};
+use tsfile::common::{
+    ColumnCategory, ColumnSchema, CompressionType, TSDataType, TSEncoding, TableSchema, TimeRange,
+};
 use tsfile::reader::TsFileReader;
 use tsfile::writer::{Tablet, TsFileWriter};
 
@@ -47,7 +49,14 @@ fn test_write_read_all_data_types() {
 
         let mut tablet = Tablet::with_schema(
             "all_types",
-            vec!["bool_col", "int32_col", "int64_col", "float_col", "double_col", "string_col"],
+            vec![
+                "bool_col",
+                "int32_col",
+                "int64_col",
+                "float_col",
+                "double_col",
+                "string_col",
+            ],
             vec![
                 TSDataType::Boolean,
                 TSDataType::Int32,
@@ -74,7 +83,9 @@ fn test_write_read_all_data_types() {
             tablet.add_value(i, "int64_col", i as i64 * 100).unwrap();
             tablet.add_value(i, "float_col", i as f32 * 1.5).unwrap();
             tablet.add_value(i, "double_col", i as f64 * 2.5).unwrap();
-            tablet.add_value(i, "string_col", format!("value_{}", i)).unwrap();
+            tablet
+                .add_value(i, "string_col", format!("value_{}", i))
+                .unwrap();
         }
 
         writer.write_tablet(&tablet).unwrap();
@@ -113,15 +124,13 @@ fn test_write_read_with_compression() {
         {
             let schema = TableSchema::new(
                 "test_compression",
-                vec![
-                    ColumnSchema::new(
-                        "temperature",
-                        TSDataType::Float,
-                        *compression,
-                        TSEncoding::Plain,
-                        ColumnCategory::Field,
-                    ),
-                ],
+                vec![ColumnSchema::new(
+                    "temperature",
+                    TSDataType::Float,
+                    *compression,
+                    TSEncoding::Plain,
+                    ColumnCategory::Field,
+                )],
             );
 
             let mut writer = TsFileWriter::new(path, schema).unwrap();
@@ -136,7 +145,9 @@ fn test_write_read_with_compression() {
 
             for i in 0..50 {
                 tablet.add_timestamp(i, i as i64);
-                tablet.add_value(i, "temperature", 20.0 + (i as f32 * 0.1)).unwrap();
+                tablet
+                    .add_value(i, "temperature", 20.0 + (i as f32 * 0.1))
+                    .unwrap();
             }
 
             writer.write_tablet(&tablet).unwrap();
@@ -179,7 +190,11 @@ fn test_write_read_large_dataset() {
             "large_data",
             vec!["sensor1", "sensor2", "sensor3"],
             vec![TSDataType::Double, TSDataType::Double, TSDataType::Double],
-            vec![ColumnCategory::Field, ColumnCategory::Field, ColumnCategory::Field],
+            vec![
+                ColumnCategory::Field,
+                ColumnCategory::Field,
+                ColumnCategory::Field,
+            ],
             num_rows,
         );
 
@@ -197,7 +212,7 @@ fn test_write_read_large_dataset() {
     // Read and verify
     {
         let mut reader = TsFileReader::open(path).unwrap();
-        let mut result_set = reader.read_all().unwrap();
+        let result_set = reader.read_all().unwrap();
 
         // 1000 rows * 3 columns = 3000 total entries
         assert_eq!(result_set.row_count(), num_rows * 3);
@@ -324,7 +339,9 @@ fn test_multiple_tablets() {
             for i in 0..10 {
                 let timestamp = (batch * 100 + i) as i64;
                 tablet.add_timestamp(i, timestamp);
-                tablet.add_value(i, "value", (batch * 100 + i) as i32).unwrap();
+                tablet
+                    .add_value(i, "value", (batch * 100 + i) as i32)
+                    .unwrap();
             }
 
             writer.write_tablet(&tablet).unwrap();
